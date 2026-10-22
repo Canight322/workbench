@@ -197,6 +197,7 @@ textarea.field { resize: vertical; min-height: 72px; }
 .card-foot .spacer { flex: 1; }
 .done-btn { flex: 1; height: 28px; border-radius: 7px; background: var(--green-bg); color: var(--green); font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; line-height: 19px; }
 .done-btn:hover { background: var(--green-bg-2); }
+.done-btn svg { width: 13px; height: 13px; }
 
 .fold { margin-top: 14px; }
 .fold-head { display: flex; align-items: center; gap: 8px; padding: 11px 16px; width: 100%; font-size: 15px; font-weight: 600; text-align: left; line-height: 22px; }

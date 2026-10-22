@@ -257,8 +257,8 @@ function viewBoard() {
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
       <div class="card-foot">
         ${t.status === 'todo' ? `
-          <label class="check"><input type="checkbox" data-act="task-start" data-id="${t.id}">开始处理</label>
-          <span class="spacer"></span>` : `
+          <button class="done-btn" data-act="task-start" data-id="${t.id}">${ICON.play}开始处理</button>
+          <button class="icon-btn go" data-act="task-edit" data-id="${t.id}" title="详情 / 编辑">${ICON.arrow}</button>` : `
           <button class="back-btn" data-act="task-back" data-id="${t.id}" title="退回到未完成">${ICON.undo}回退</button>
           <button class="done-btn" data-act="task-done" data-id="${t.id}">${ICON.check}完成</button>
           <button class="icon-btn go" data-act="task-edit" data-id="${t.id}" title="详情 / 编辑">${ICON.arrow}</button>`}
@@ -865,6 +865,7 @@ document.addEventListener('click', e => {
     case 'toggle-meet-more': ui.meetMore = !ui.meetMore; saveUi(); render(); $('#meetInput').focus(); break;
     case 'fold': ui[el.dataset.key] = !ui[el.dataset.key]; saveUi(); render(); break;
     case 'task-edit': editTask(findTask(id)); break;
+    case 'task-start': setStatus(findTask(id), 'doing'); break;
     case 'task-back': setStatus(findTask(id), 'todo'); toast('已回退到未完成'); break;
     case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
     case 'task-reopen': setStatus(findTask(id), 'doing'); break;
@@ -897,7 +898,6 @@ document.addEventListener('click', e => {
 
 document.addEventListener('change', e => {
   const el = e.target;
-  if (el.dataset.act === 'task-start') setStatus(findTask(el.dataset.id), 'doing');
   if (['mProject', 'mType', 'mFrom', 'mTo'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
 });
 
