@@ -469,7 +469,8 @@ function weekView(s) {
       : `<span class="wk-note" style="right:calc(${100 - a}% + 12px)">${html}</span>`;
   };
 
-  const rows = liveTasks().map(t => {
+  // 周视图只看进行中的任务（含它之前的待办期）
+  const rows = liveTasks().filter(t => t.status === 'doing').map(t => {
     const { segs, marks } = phasesOf(t, nowTs);
     const visible = segs.some(g => g.a < we && g.b > ws) || marks.some(m => inWeek(m.t));
     if (!visible) return null;
@@ -500,7 +501,7 @@ function weekView(s) {
   return `<div class="week">
     <div class="week-row head"><div>任务</div>${days.map((d, i) => `<div class="${d === t0 ? 'is-today' : ''}">${WEEK[i]}<b>${mdSlash(parseYmd(d))}</b></div>`).join('')}</div>
     ${rows.map(r => r.html).join('')}
-    ${rows.length ? '' : `<div class="week-row"><div class="empty" style="grid-column:1/-1">本周没有任务记录</div></div>`}
+    ${rows.length ? '' : `<div class="week-row"><div class="empty" style="grid-column:1/-1">本周没有进行中的任务</div></div>`}
   </div>`;
 }
 
@@ -520,13 +521,19 @@ function monthView(base) {
       tip: `${shortTime(t.doneAt)} 完成 · 共 ${fmtDur(t.doneAt - t.createdAt)}\n${t.text}`,
     }));
     const shown = items.slice(0, 3);
-    cells.push(`<div class="m-cell ${d.getMonth() !== mo ? 'out' : ''} ${ds === t0 ? 'is-today' : ''}">
+    cells.push({ has: items.length > 0, html: `<div class="m-cell ${d.getMonth() !== mo ? 'out' : ''} ${ds === t0 ? 'is-today' : ''}">
       <span class="m-day">${d.getDate()}</span>${items.length ? `<span class="m-count">✓ ${items.length}</span>` : ''}
       ${shown.map(it => `<div class="m-chip ${it.cls}" data-act="${it.act}" data-id="${it.id}" title="${esc(it.tip)}">${esc(it.text)}</div>`).join('')}
       ${items.length > 3 ? `<span class="m-more" title="${esc(items.slice(3).map(i => i.text).join('\n'))}">+${items.length - 3} 项</span>` : ''}
-    </div>`);
+    </div>` });
   }
-  return `<div class="month"><div class="month-head">${WEEK.map(w => `<div>周${w}</div>`).join('')}</div><div class="month-grid">${cells.join('')}</div></div>`;
+  // 整周都没有完成任务的那一行压矮
+  const rowsHtml = [];
+  for (let w = 0; w < weeks; w++) {
+    const wk = cells.slice(w * 7, w * 7 + 7);
+    rowsHtml.push(`<div class="month-row ${wk.some(c => c.has) ? '' : 'slim'}">${wk.map(c => c.html).join('')}</div>`);
+  }
+  return `<div class="month"><div class="month-head">${WEEK.map(w => `<div>周${w}</div>`).join('')}</div>${rowsHtml.join('')}</div>`;
 }
 
 /* ----- 会议索引 ----- */

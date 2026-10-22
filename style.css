@@ -315,11 +315,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
   font-size: 12px; color: var(--muted); padding: 0 8px; line-height: 20px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer;
 }
 .month { min-width: 700px; }
-.month-head, .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.month-head, .month-row { display: grid; grid-template-columns: repeat(7, 1fr); }
 .month-head { background: var(--hover); }
 .month-head div { padding: 8px; text-align: center; color: var(--muted); font-size: 13px; line-height: 19px; }
 .m-cell { min-height: 84px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.m-cell:nth-child(7n + 1) { border-left: 0; }
+.m-cell:first-child { border-left: 0; }
+.month-row.slim .m-cell { min-height: 34px; }
 .m-cell.out { background: color-mix(in srgb, var(--hover) 40%, transparent); }
 .m-cell.out .m-day { color: var(--faint); }
 .m-cell.is-today { background: color-mix(in srgb, var(--green-bg) 45%, transparent); }
