@@ -19,6 +19,8 @@ const fromLocalInput = v => (v ? new Date(v).getTime() || 0 : 0);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => ymd(new Date());
 const firstLine = s => String(s || '').split('\n')[0];
+// 页面结构和脚本版本不一致时（如浏览器缓存），缺失的区块直接跳过，不让整页报错
+const setHTML = (sel, html) => { const el = $(sel); if (el) el.innerHTML = html; };
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 隐私模式等 */ } };
 
@@ -143,12 +145,13 @@ function render() {
   renderStats();
   $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const v = $('#view');
+  if (!v) return;
   // 重绘时保留输入框里还没提交的内容和焦点
   const kept = $$('#view form [name]').map(el => [el.form.id, el.name, el.value]);
   const af = document.activeElement;
   const focus = af?.form?.id && af.name && v.contains(af) ? [af.form.id, af.name] : null;
   if (ui.tab === 'calendar') ui.tab = 'board';  // 完成日历已固定显示在标签栏上方
-  $('#calendar').innerHTML = viewCalendar();
+  setHTML('#calendar', viewCalendar());
   if (ui.tab === 'board') v.innerHTML = viewBoard();
   else v.innerHTML = viewMeetings();
   for (const [f, n, val] of kept) { const el = $(`#${f} [name="${n}"]`); if (el) el.value = val; }
@@ -158,7 +161,7 @@ function render() {
 function renderNav() {
   const open = db.tasks.filter(t => !t.deletedAt && t.status !== 'done');
   const cnt = id => open.filter(t => t.project === id).length;
-  $('#projectNav').innerHTML = `
+  setHTML('#projectNav', `
     <button class="nav-item ${ui.project === 'all' ? 'active' : ''}" data-act="project" data-id="all">
       <span class="all-icon">${ICON.grid}</span>全部项目<span class="count">${open.length || ''}</span>
     </button>
@@ -169,12 +172,13 @@ function renderNav() {
         <span class="count">${cnt(p.id) || ''}</span>
         <span class="edit" data-act="project-edit" data-id="${p.id}" title="编辑项目">✎</span>
       </button>`).join('') || '<div class="nav-empty">还没有项目</div>'}
-    <button class="nav-add" data-act="project-add">${ICON.plus}新建项目</button>`;
+    <button class="nav-add" data-act="project-add">${ICON.plus}新建项目</button>`);
 }
 
 function renderHeader() {
   const d = new Date();
-  $('#todayLabel').textContent = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
+  const tl = $('#todayLabel');
+  if (tl) tl.textContent = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
   renderSync();
 }
 
@@ -194,10 +198,10 @@ function renderStats() {
     <div class="stat"><span class="stat-icon ${cls}">${icon}</span><div>
       <div class="stat-label">${label}</div>
       <div class="stat-num">${num}<small>${unit}</small>${extra}</div></div></div>`;
-  $('#stats').innerHTML =
+  setHTML('#stats',
     item('orange', ICON.list, '今日到期', dueToday, '项', overdue ? `<span class="warn">逾期 ${overdue}</span>` : '') +
     item('green', ICON.play, '进行中', doing, '项') +
-    item('purple', ICON.chat, '本周会议', wm, '场');
+    item('purple', ICON.chat, '本周会议', wm, '场'));
 }
 
 const projectOptions = (sel, allLabel) =>
@@ -864,6 +868,7 @@ function syncText() {
 }
 function renderSync() {
   const b = $('#syncBtn');
+  if (!b) return;
   b.className = 'sync-btn ' + sync.state;
   b.innerHTML = `<i></i>${sync.state === 'off' ? (cfgReady() ? '待同步' : '连接 GitHub') : sync.state === 'syncing' ? '同步中' : sync.state === 'err' ? '同步失败' : '已同步'}`;
   b.title = syncText();
@@ -1000,6 +1005,19 @@ let lastDay = today();
 setInterval(() => { if (today() !== lastDay) { lastDay = today(); render(); } }, 60000);
 // 其他标签页修改了本地数据
 window.addEventListener('storage', e => { if (e.key === LS_DATA) { db = load(LS_DATA, db); render(); } });
+
+// 出错时给出提示，而不是留下空白页
+function showFatal(msg) {
+  if (document.getElementById('fatal')) return;
+  const el = document.createElement('div');
+  el.id = 'fatal';
+  el.className = 'fatal';
+  el.innerHTML = `<b>页面加载出错</b><span>多半是浏览器缓存了旧文件，刷新一下通常就好；你的数据不会丢失。</span><button>刷新页面</button><small>${esc(msg)}</small>`;
+  el.querySelector('button').onclick = () => location.reload();
+  document.body.prepend(el);
+}
+window.addEventListener('error', e => showFatal(e.message || '未知错误'));
+window.addEventListener('unhandledrejection', e => showFatal(String(e.reason?.message || e.reason)));
 
 render();
 doSync();

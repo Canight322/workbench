@@ -396,3 +396,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
   .wk-label { padding: 0 8px; }
   .wk-note { display: none; }
 }
+
+.fatal { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 100; width: min(520px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--red); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0,0,0,.15); display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+.fatal b { color: var(--red); }
+.fatal span { grid-column: 1; color: var(--muted); font-size: 13px; }
+.fatal button { grid-column: 2; grid-row: 1 / 3; background: var(--red); color: #fff; border-radius: 8px; padding: 6px 14px; }
+.fatal small { grid-column: 1 / -1; color: var(--faint); font-family: var(--mono); font-size: 11px; word-break: break-all; }
