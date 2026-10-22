@@ -77,6 +77,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-item .count { margin-left: auto; font-size: 12px; color: var(--faint); font-family: var(--mono); }
 .nav-item .edit { margin-left: 4px; opacity: 0; color: var(--muted); font-size: 12px; padding: 0 4px; }
 .nav-item:hover .edit { opacity: 1; }
+.nav-empty { color: var(--faint); font-size: 13px; padding: 6px 14px; }
+.nav-add { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 9px 14px; border-radius: 10px; border: 1px dashed var(--line-2); color: var(--muted); font-size: 14px; }
+.nav-add:hover { color: var(--green); border-color: var(--green); background: var(--green-bg); }
 .nav-sep { height: 1px; background: var(--line); margin: 10px 12px; }
 .shortcuts { margin-top: auto; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 14px 16px; font-size: 13px; }
 .shortcuts-title { font-weight: 600; margin-bottom: 6px; }
@@ -313,7 +316,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .brand { padding: 0 0 10px; }
   .side-label { padding: 0 0 6px; }
   .project-nav { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
-  .nav-item { flex: none; padding: 6px 12px; font-size: 14px; }
+  .nav-item, .nav-add { flex: none; padding: 6px 12px; font-size: 14px; margin-top: 0; }
+  .nav-empty { flex: none; }
   .nav-item.active::before, .nav-sep, .shortcuts, .nav-item .count, .nav-item .edit { display: none; }
   .topbar { padding: 14px 16px; flex-wrap: wrap; position: static; }
   .composer { padding: 10px 12px; }

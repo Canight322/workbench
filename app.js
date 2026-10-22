@@ -39,15 +39,15 @@ const ICON = {
 /* ========== 数据 ========== */
 const LS_DATA = 'wb.data', LS_CFG = 'wb.cfg', LS_UI = 'wb.ui';
 const COLORS = ['#e05a4f', '#f0a032', '#8f62e0', '#3fae74', '#4a83e6', '#6f6a60', '#d4609e', '#2fa8b5'];
-const DEFAULT_PROJECTS = ['抖音买单二期', '抖音自助线', 'CRM开通', '本地推', '代运营', '其他'];
 const MEETING_TYPES = ['周会', '需求评审', '客户沟通', '项目同步', '复盘', '其他'];
 const STATUS = { todo: '未完成', doing: '进行中', done: '已完成' };
 const COLLECTIONS = ['projects', 'tasks', 'meetings'];
 
 // 每条记录都带 u（最后修改时间），删除只打 deletedAt 标记，多端合并时逐条取较新的版本
+// 项目名属于个人数据，不写在公开代码里，只保存在本地和私有数据仓库中
 function blank() {
   return {
-    projects: DEFAULT_PROJECTS.map((name, i) => ({ id: 'p' + i, name, color: COLORS[i], order: i, u: 0 })),
+    projects: [],
     tasks: [],
     meetings: [],
     updatedAt: 0,
@@ -111,7 +111,8 @@ function render() {
   const v = $('#view');
   // 重绘时保留输入框里还没提交的内容和焦点
   const kept = $$('#view form [name]').map(el => [el.form.id, el.name, el.value]);
-  const focus = document.activeElement?.form ? [document.activeElement.form.id, document.activeElement.name] : null;
+  const af = document.activeElement;
+  const focus = af?.form?.id && af.name && v.contains(af) ? [af.form.id, af.name] : null;
   if (ui.tab === 'board') v.innerHTML = viewBoard();
   else if (ui.tab === 'calendar') v.innerHTML = viewCalendar();
   else v.innerHTML = viewMeetings();
@@ -132,7 +133,8 @@ function renderNav() {
         <span class="dot" style="background:${p.color}"></span>${esc(p.name)}
         <span class="count">${cnt(p.id) || ''}</span>
         <span class="edit" data-act="project-edit" data-id="${p.id}" title="编辑项目">✎</span>
-      </button>`).join('')}`;
+      </button>`).join('') || '<div class="nav-empty">还没有项目</div>'}
+    <button class="nav-add" data-act="project-add">${ICON.plus}新建项目</button>`;
 }
 
 function renderHeader() {
