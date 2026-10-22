@@ -81,6 +81,32 @@ function commit() {
 function patch(obj, fields) { Object.assign(obj, fields, { u: now() }); commit(); }
 
 /* ========== 任务操作 ========== */
+// 变更记录：每次状态变化写入 t.log；旧数据没有 log 时按时间戳推算
+const LOG_TEXT = { create: '创建', start: '开始处理', pause: '退回未完成', done: '完成', reopen: '撤回到进行中', delete: '删除', restore: '恢复' };
+function logOf(t) {
+  if (t.log?.length) return [...t.log].sort((a, b) => a.t - b.t);
+  const l = [{ a: 'create', t: t.createdAt }];
+  if (t.startedAt) l.push({ a: 'start', t: t.startedAt });
+  if (t.doneAt) l.push({ a: 'done', t: t.doneAt });
+  if (t.deletedAt) l.push({ a: 'delete', t: t.deletedAt });
+  return l;
+}
+const withLog = (t, a, at = now()) => [...logOf(t), { a, t: at }];
+// 手动修改创建/开始/完成时间后，让对应的记录跟着变
+function retimeLog(log, kind, ts) {
+  const idx = kind === 'create' ? log.findIndex(e => e.a === 'create')
+    : log.map(e => e.a).lastIndexOf(kind);  // startedAt 对应最近一次「开始处理」，撤回不改它
+  if (idx >= 0) log[idx] = { ...log[idx], t: ts };
+  return log.sort((a, b) => a.t - b.t);
+}
+function fmtDur(ms) {
+  const m = Math.max(0, Math.round(ms / 6e4));
+  if (m < 60) return `${m}分钟`;
+  const h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d) return `${d}天${h % 24 ? (h % 24) + '小时' : ''}`;
+  return `${h}小时${m % 60 ? (m % 60) + '分' : ''}`;
+}
+
 function addTask(text, opts = {}) {
   text = text.trim();
   if (!text) return;
@@ -89,20 +115,24 @@ function addTask(text, opts = {}) {
     status: 'todo', due: opts.due || '', note: opts.note || '',
     createdAt: now(), startedAt: 0, doneAt: 0, deletedAt: 0, u: now(),
   };
+  t.log = [{ a: 'create', t: t.createdAt }];
   db.tasks.push(t);
   commit();
   return t;
 }
 function setStatus(t, status) {
-  const f = { status };
+  if (status === t.status) return;
+  const a = status === 'done' ? 'done' : status === 'todo' ? 'pause' : t.status === 'done' ? 'reopen' : 'start';
+  const f = { status, log: withLog(t, a) };
   if (status === 'doing') { f.startedAt = t.startedAt || now(); f.doneAt = 0; }
   if (status === 'done') { f.doneAt = now(); f.startedAt = t.startedAt || now(); }
   if (status === 'todo') { f.startedAt = 0; f.doneAt = 0; }
   patch(t, f);
 }
 function removeTask(t) {
-  patch(t, { deletedAt: now() });
-  toast('已删除，可在「已删除」中找回', () => patch(t, { deletedAt: 0 }));
+  const log = t.log;
+  patch(t, { deletedAt: now(), log: withLog(t, 'delete') });
+  toast('已删除，可在「已删除」中找回', () => patch(t, { deletedAt: 0, log }));
 }
 
 /* ========== 渲染 ========== */
@@ -275,13 +305,6 @@ function viewBoard() {
 }
 
 /* ----- 完成日历 ----- */
-function taskSpan(t) {
-  const t0 = today();
-  const created = ymd(t.createdAt);
-  if (t.status === 'done') return [ymd(t.startedAt || t.createdAt), ymd(t.doneAt)];
-  if (t.status === 'doing') return [ymd(t.startedAt), t0];
-  return [created, t.due && t.due > created ? t.due : created];
-}
 const statusColor = s => ({ todo: 'var(--orange)', doing: 'var(--faint)', done: 'var(--green)' }[s]);
 
 function viewCalendar() {
@@ -310,39 +333,93 @@ function viewCalendar() {
           <button class="btn" data-act="cal-today">今天</button>
         </div>
       </div>
-      <div class="legend">
-        <span><i class="st-todo"></i>未完成</span><span><i class="st-doing"></i>进行中</span>
-        <span><i class="st-done"></i>已完成</span><span><i class="st-meet"></i>会议</span>
+      <div class="legend">${ui.calMode === 'week' ? `
+        <span><i class="mk-mini"></i>创建</span><span><i class="ph-todo"></i>待办期</span><span><i class="mk-mini start"></i>开始</span>
+        <span><i class="ph-doing"></i>进行期</span><span><i class="mk-mini done"></i>完成</span><span><i class="ph-meet"></i>会议</span><span><i class="lg-now"></i>现在</span>` : `
+        <span><i class="ev-create"></i>创建</span><span><i class="ev-start"></i>开始</span><span><i class="ev-done"></i>完成</span><span><i class="st-meet"></i>会议</span>`}
       </div>
       <div class="cal-scroll">${body}</div>
     </div>`;
 }
 
+// 把变更记录切成阶段：待办期 / 进行期，以及创建、开始、完成三个节点
+function phasesOf(t, cap = now()) {
+  const STATE = { create: 'todo', start: 'doing', reopen: 'doing', pause: 'todo', done: 'done' };
+  const segs = [], marks = [];
+  let state = null, from = 0;
+  for (const e of logOf(t)) {
+    const next = STATE[e.a];
+    if (!next) continue;
+    if (state && state !== 'done' && e.t > from) segs.push({ s: state, a: from, b: e.t });
+    if (e.a === 'create' || e.a === 'start' || e.a === 'done') marks.push({ k: e.a, t: e.t });
+    state = next; from = e.t;
+  }
+  if (state && state !== 'done') segs.push({ s: state, a: from, b: Math.max(cap, from) });
+  return { segs, marks };
+}
+const PHASE = { todo: '待办期', doing: '进行期' };
+
 function weekView(s) {
   const days = [...Array(7)].map((_, i) => ymd(addDays(s, i)));
-  const t0 = today();
-  const first = days[0], last = days[6];
-  const rows = liveTasks()
-    .map(t => ({ t, span: taskSpan(t) }))
-    .filter(({ span }) => span[0] <= last && span[1] >= first)
-    .sort((a, b) => a.span[0].localeCompare(b.span[0]) || a.t.createdAt - b.t.createdAt);
-  const meets = liveMeetings().filter(m => m.date >= first && m.date <= last)
-    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-  const cells = () => days.map((d, i) => `<div class="wk-cell ${d === t0 ? 'is-today' : ''}" style="grid-column:${i + 2}"></div>`).join('');
-  const bar = (from, to, cls, text, act, id) => {
-    const a = days.indexOf(from), b = days.indexOf(to);
-    return `<div class="wk-bar ${cls}" style="grid-column:${a + 2}/${b + 3}" data-act="${act}" data-id="${id}" title="${esc(text)}">${esc(text)}</div>`;
+  const t0 = today(), nowTs = now();
+  const ws = s.getTime(), we = addDays(s, 7).getTime();
+  const pct = x => ((Math.min(Math.max(x, ws), we) - ws) / (we - ws)) * 100;
+  const inWeek = x => x >= ws && x < we;
+  const nowLine = inWeek(nowTs) ? `<i class="wk-now" style="left:${pct(nowTs)}%"></i>` : '';
+
+  // 文字说明放在空间更大的一侧
+  const note = (startTs, endTs, html) => {
+    const a = pct(startTs), b = pct(endTs);
+    return 100 - b >= a
+      ? `<span class="wk-note" style="left:calc(${b}% + 12px)">${html}</span>`
+      : `<span class="wk-note" style="right:calc(${100 - a}% + 12px)">${html}</span>`;
   };
+
+  const rows = liveTasks().map(t => {
+    const { segs, marks } = phasesOf(t, nowTs);
+    const visible = segs.some(g => g.a < we && g.b > ws) || marks.some(m => inWeek(m.t));
+    if (!visible) return null;
+    const first = Math.min(...segs.map(g => g.a), ...marks.map(m => m.t));
+    const last = Math.max(...segs.map(g => g.b), ...marks.map(m => m.t));
+    const segHtml = segs.filter(g => g.a < we && g.b > ws).map(g => {
+      const l = pct(g.a), w = pct(g.b) - l;
+      const cls = `ph ph-${g.s}${g.a < ws ? ' cut-l' : ''}${g.b > we ? ' cut-r' : ''}`;
+      const tip = `${PHASE[g.s]}：${shortTime(g.a)} → ${g.b >= nowTs - 6e4 && t.status === g.s ? '现在' : shortTime(g.b)}（${fmtDur(g.b - g.a)}）`;
+      return `<div class="${cls}" style="left:${l}%;width:${w}%" title="${tip}"></div>`;
+    }).join('');
+    const markHtml = marks.filter(m => inWeek(m.t)).map(m =>
+      `<span class="mk mk-${m.k}" style="left:${pct(m.t)}%" title="${LOG_TEXT[m.k]} ${shortTime(m.t)}">${m.k === 'done' ? ICON.check : ''}</span>`).join('');
+    const created = marks.find(m => m.k === 'create')?.t ?? first;
+    const text = t.status === 'done'
+      ? `<b class="ok">完成</b> ${shortTime(t.doneAt)} · 共 ${fmtDur(t.doneAt - created)}`
+      : t.status === 'doing' ? `<b class="ing">进行中</b> 已 ${fmtDur(nowTs - t.startedAt)}`
+      : `<b class="wait">待开始</b> 已等 ${fmtDur(nowTs - t.createdAt)}`;
+    return { t, first, html: `<div class="week-row">
+      <div class="wk-label" style="grid-column:1" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(firstLine(t.text))}</span></div>
+      ${cells()}
+      <div class="wk-track" data-act="task-edit" data-id="${t.id}">${segHtml}${markHtml}${note(Math.max(first, ws), Math.min(last, we), text)}${nowLine}</div>
+    </div>` };
+  }).filter(Boolean).sort((a, b) => a.first - b.first);
+
+  const meets = liveMeetings().filter(m => m.date >= days[0] && m.date <= days[6])
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).map(m => {
+      const a = new Date(`${m.date}T${m.start || '09:00'}`).getTime();
+      const b = m.end ? new Date(`${m.date}T${m.end}`).getTime() : a + 36e5;
+      return `<div class="week-row">
+        <div class="wk-label" style="grid-column:1" data-act="meet-edit" data-id="${m.id}"><span class="dot" style="background:var(--purple)"></span><span>${esc(m.title)}</span></div>
+        ${cells()}
+        <div class="wk-track" data-act="meet-edit" data-id="${m.id}">
+          <div class="ph ph-meet" style="left:${pct(a)}%;width:${pct(Math.max(b, a)) - pct(a)}%" title="${esc(m.title)} ${m.start || ''}–${m.end || ''}"></div>
+          ${note(a, b, `<b class="mt">会议</b> ${esc(m.start || '')}${m.end ? '–' + esc(m.end) : ''}`)}${nowLine}
+        </div>
+      </div>`;
+    });
+
+  function cells() { return days.map((d, i) => `<div class="wk-cell ${d === t0 ? 'is-today' : ''}" style="grid-column:${i + 2}"></div>`).join(''); }
+
   return `<div class="week">
     <div class="week-row head"><div>任务</div>${days.map((d, i) => `<div class="${d === t0 ? 'is-today' : ''}">${WEEK[i]}<b>${mdSlash(parseYmd(d))}</b></div>`).join('')}</div>
-    ${rows.map(({ t, span }) => `<div class="week-row">
-      <div class="wk-label" style="grid-column:1" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(firstLine(t.text))}</span></div>
-      ${cells()}${bar(span[0] < first ? first : span[0], span[1] > last ? last : span[1], 'st-' + t.status, firstLine(t.text), 'task-edit', t.id)}
-    </div>`).join('')}
-    ${meets.map(m => `<div class="week-row">
-      <div class="wk-label" style="grid-column:1" data-act="meet-edit" data-id="${m.id}"><span class="dot" style="background:var(--purple)"></span><span>${esc(m.title)}</span></div>
-      ${cells()}${bar(m.date, m.date, 'st-meet', `${m.start || ''} ${m.title}`, 'meet-edit', m.id)}
-    </div>`).join('')}
+    ${rows.map(r => r.html).join('')}${meets.join('')}
     ${rows.length + meets.length ? '' : `<div class="week-row"><div class="empty" style="grid-column:1/-1">本周没有任务记录</div></div>`}
   </div>`;
 }
@@ -354,19 +431,22 @@ function monthView(base) {
   const weeks = Math.ceil((Math.round((lastDay - start) / 864e5) + 1) / 7);
   const t0 = today();
   const tasks = liveTasks(), meets = liveMeetings();
+  // 每天发生的状态变化（创建 / 开始 / 完成）
+  const dayEvents = tasks.flatMap(task => logOf(task).filter(e => ['create', 'start', 'done'].includes(e.a)).map(e => ({ ...e, task, day: ymd(e.t) })))
+    .sort((a, b) => a.t - b.t);
   const cells = [];
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i), ds = ymd(d);
     const items = [
-      ...tasks.filter(t => t.status === 'done' && ymd(t.doneAt) === ds).map(t => ({ cls: 'st-done', text: firstLine(t.text), act: 'task-edit', id: t.id })),
-      ...tasks.filter(t => t.status !== 'done' && t.due === ds).map(t => ({ cls: 'st-' + t.status, text: firstLine(t.text), act: 'task-edit', id: t.id })),
-      ...meets.filter(m => m.date === ds).map(m => ({ cls: 'st-meet', text: `${m.start || ''} ${m.title}`, act: 'meet-edit', id: m.id })),
+      ...dayEvents.filter(e => e.day === ds).map(e => ({ cls: 'ev-' + e.a, text: `${LOG_TEXT[e.a]} · ${firstLine(e.task.text)}`, tip: `${shortTime(e.t)} ${LOG_TEXT[e.a]}：${e.task.text}`, act: 'task-edit', id: e.task.id })),
+      ...tasks.filter(t => t.status !== 'done' && t.due === ds).map(t => ({ cls: 'ev-due', text: `截止 · ${firstLine(t.text)}`, tip: `截止：${t.text}`, act: 'task-edit', id: t.id })),
+      ...meets.filter(m => m.date === ds).map(m => ({ cls: 'st-meet', text: `${m.start || ''} ${m.title}`, tip: m.title, act: 'meet-edit', id: m.id })),
     ];
     const shown = items.slice(0, 3);
     cells.push(`<div class="m-cell ${d.getMonth() !== mo ? 'out' : ''} ${ds === t0 ? 'is-today' : ''}">
       <span class="m-day">${d.getDate()}</span>
-      ${shown.map(it => `<div class="m-chip ${it.cls}" data-act="${it.act}" data-id="${it.id}" title="${esc(it.text)}">${esc(it.text)}</div>`).join('')}
-      ${items.length > 3 ? `<span class="m-more">+${items.length - 3} 项</span>` : ''}
+      ${shown.map(it => `<div class="m-chip ${it.cls}" data-act="${it.act}" data-id="${it.id}" title="${esc(it.tip)}">${esc(it.text)}</div>`).join('')}
+      ${items.length > 3 ? `<span class="m-more" title="${esc(items.slice(3).map(i => i.text).join('\n'))}">+${items.length - 3} 项</span>` : ''}
     </div>`);
   }
   return `<div class="month"><div class="month-head">${WEEK.map(w => `<div>周${w}</div>`).join('')}</div><div class="month-grid">${cells.join('')}</div></div>`;
@@ -472,12 +552,15 @@ function editTask(t) {
     </div>
     <label>截止日期<input class="field" type="date" name="due" value="${esc(t.due)}"></label>
     <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
-    <div class="grid3">
+    <div class="grid3 even">
       <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
       <label>开始时间<input class="field" type="datetime-local" name="startedAt" value="${toLocalInput(t.startedAt)}"></label>
       <label>完成时间<input class="field" type="datetime-local" name="doneAt" value="${toLocalInput(t.doneAt)}"></label>
     </div>
     <p class="hint">开始 / 完成时间留空时，切换状态会自动记为当前时间，补录历史任务时可手动修改。</p>
+    <div class="timeline"><div class="tl-title">变更记录</div>${logOf(t).map((e, i, l) => `
+      <div class="tl-item tl-${e.a}"><i></i><span class="mono">${fmtTime(e.t)}</span><b>${LOG_TEXT[e.a] || e.a}</b>${i ? `<em>${fmtDur(e.t - l[i - 1].t)}后</em>` : ''}</div>`).join('')}
+    </div>
     <div class="acts">
       <button type="button" class="btn danger left" id="dlgDel">删除</button>
       <button type="button" class="btn" data-close>取消</button>
@@ -488,10 +571,14 @@ function editTask(t) {
     if (status !== t.status) setStatus(t, status);
     // 手填的时间优先于状态切换时自动记录的时间
     const times = {};
+    let log = logOf(t);
     const created = fromLocalInput(f.get('createdAt')), started = fromLocalInput(f.get('startedAt')), done = fromLocalInput(f.get('doneAt'));
-    if (created) times.createdAt = created;
-    if (t.status !== 'todo' && started) times.startedAt = started;
-    if (t.status === 'done' && done) times.doneAt = done;
+    // 只处理真正改动过的时间（输入框精确到分钟）
+    const changed = (v, old) => v && Math.floor(v / 6e4) !== Math.floor((old || 0) / 6e4);
+    if (changed(created, t.createdAt)) { times.createdAt = created; log = retimeLog(log, 'create', created); }
+    if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
+    if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
+    if (Object.keys(times).length) times.log = log;
     patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: f.get('due'), note: f.get('note'), ...times });
   });
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
@@ -781,7 +868,7 @@ document.addEventListener('click', e => {
     case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
     case 'task-reopen': setStatus(findTask(id), 'doing'); break;
     case 'task-del': removeTask(findTask(id)); break;
-    case 'task-restore': patch(findTask(id), { deletedAt: 0 }); break;
+    case 'task-restore': { const t = findTask(id); patch(t, { deletedAt: 0, log: withLog(t, 'restore') }); break; }
     case 'task-purge':
       if (confirm('彻底删除后无法恢复，确定吗？')) patch(findTask(id), { purged: 1, text: '', note: '' });
       break;
