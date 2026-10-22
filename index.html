@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>个人工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e6eee5'/><path d='M9 16.5l4.5 4.5L23 11.5' stroke='%235f8f72' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon"><svg viewBox="0 0 24 24"><path d="M6 12.5l4 4L18 8"/></svg></div>
+      <div><div class="brand-title">工作流</div><div class="brand-sub">个人工作台</div></div>
+    </div>
+    <div class="side-label">项目 <button class="icon-btn sm" data-act="project-add" title="新建项目">+</button></div>
+    <nav id="projectNav" class="project-nav"></nav>
+    <div class="shortcuts">
+      <div class="shortcuts-title">快捷键</div>
+      <div class="shortcut"><span>新建任务</span><kbd>N</kbd></div>
+      <div class="shortcut"><span>搜索</span><kbd>⌘K</kbd></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1>个人工作台</h1>
+        <div class="today" id="todayLabel"></div>
+      </div>
+      <div class="topbar-right">
+        <div class="summary" id="summary"></div>
+        <button class="sync-btn" id="syncBtn" data-act="settings"></button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="stats" id="stats"></section>
+
+      <div class="tabs" id="tabs">
+        <button data-tab="board"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M9 9v10"/></svg>待办看板</button>
+        <button data-tab="calendar"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>完成日历</button>
+        <button data-tab="meetings"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>会议索引</button>
+      </div>
+
+      <section id="view"></section>
+    </div>
+  </main>
+</div>
+
+<dialog id="dlg" class="dlg"></dialog>
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

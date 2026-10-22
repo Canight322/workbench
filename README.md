@@ -1,0 +1,28 @@
+# 个人工作台
+
+纯静态的个人工作台，部署在 GitHub Pages，数据通过 GitHub API 同步到仓库里的一个 JSON 文件。
+
+## 功能
+
+- **待办看板**：输入回车新建；未完成 →「开始处理」→ 进行中 →「完成」；可设置项目、截止日期、备注
+- **已删除记录**：删除的任务不会立即消失，表格记录删除前状态和删除时间，可恢复或彻底删除
+- **完成日历**：周视图（任务甘特条）/ 月视图（完成、到期、会议）
+- **会议索引**：页面内直接新增会议记录（名称、时间、类型、项目、讨论要点、结论），支持搜索与筛选，结论可一键转为待办
+- **项目分组**：左侧按项目筛选，可新增 / 编辑项目
+- 快捷键：`N` 新建，`⌘K` / `Ctrl+K` 全局搜索；支持手机端和深色模式
+
+## 部署
+
+1. 仓库 Settings → Pages → Source 选 `Deploy from a branch`，分支 `main` / `(root)`
+2. 访问 `https://<用户名>.github.io/<仓库名>/`
+
+## 数据同步
+
+数据默认保存在浏览器本地。点右上角「连接 GitHub」开启多设备同步：
+
+1. 新建一个**私有**仓库存数据（如 `workbench-data`，勾选初始化 README 以创建 main 分支）
+2. 创建 [Fine-grained Token](https://github.com/settings/personal-access-tokens/new)：
+   Repository access 只选数据仓库，Permissions → Contents 设为 **Read and write**
+3. 在工作台里填入 Token、用户名、仓库名，保存即可
+
+Token 仅保存在当前浏览器的 localStorage。多端同时修改时按「每条记录取最新修改」自动合并。
