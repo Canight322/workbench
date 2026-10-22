@@ -188,6 +188,10 @@ textarea.field { resize: vertical; min-height: 72px; }
 .back-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 13px; line-height: 19px; }
 .back-btn:hover { background: var(--orange-bg); color: var(--orange); }
 .back-btn svg { width: 13px; height: 13px; }
+.rel { font-size: 12px; line-height: 18px; color: var(--purple); background: var(--purple-bg); border-radius: 999px; padding: 0 8px; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel:hover { filter: brightness(.96); }
+.dlg label.inline-check { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.inline-check input { accent-color: var(--green); width: 14px; height: 14px; margin: 0; }
 .card-time { font-family: var(--mono); font-size: 12px; color: var(--faint); line-height: 17px; }
 .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }

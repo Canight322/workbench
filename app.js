@@ -113,7 +113,7 @@ function addTask(text, opts = {}) {
   if (!text) return;
   const t = {
     id: uid(), text, project: opts.project || (ui.project !== 'all' ? ui.project : ''),
-    status: 'todo', due: opts.due || '', note: opts.note || '',
+    status: 'todo', due: opts.due || '', note: opts.note || '', parent: opts.parent || '',
     createdAt: now(), startedAt: 0, doneAt: 0, deletedAt: 0, u: now(),
   };
   t.log = [{ a: 'create', t: t.createdAt }];
@@ -233,6 +233,47 @@ function dueTag(t) {
   return `<span class="tag">截止 ${md(parseYmd(dueDay(t)))}${clock}</span>`;
 }
 
+/* ----- 关联任务 ----- */
+// 子任务记录 parent；卡片上显示「接：上一步」和「后续 N」
+function relTags(t) {
+  const parent = t.parent && findTask(t.parent);
+  const kids = db.tasks.filter(x => x.parent === t.id && !x.deletedAt);
+  return (parent ? `<span class="rel" data-act="goto-task" data-id="${parent.id}" title="上一步：${esc(parent.text)}">↳ 接：${esc(firstLine(parent.text))}</span>` : '')
+    + (kids.length ? `<span class="rel" data-act="goto-task" data-id="${kids[kids.length - 1].id}" title="后续任务：\n${esc(kids.map(k => firstLine(k.text)).join('\n'))}">→ 后续 ${kids.length}</span>` : '');
+}
+function newNextTask(t) {
+  openDialog(`<form>
+    <h3>新建关联任务</h3>
+    <p class="hint">上一步：${esc(firstLine(t.text))}</p>
+    <label>下一步要做什么<textarea class="field" name="text" required placeholder="例如：同步信息到群里"></textarea></label>
+    <div class="grid2">
+      <label>项目<select class="field" name="project">${projectOptions(t.project)}</select></label>
+      <label>截止时间（可不填）${dueFields()}</label>
+    </div>
+    <label>备注<input class="field" name="note" placeholder="可选"></label>
+    <label class="inline-check"><input type="checkbox" name="finish">同时把上一步标记为完成</label>
+    <div class="acts">
+      <button type="button" class="btn" data-close>取消</button>
+      <button class="btn primary">创建</button>
+    </div>
+  </form>`, f => {
+    const next = addTask(f.get('text'), { project: f.get('project'), due: readDue(f), note: f.get('note') || '', parent: t.id });
+    if (!next) return false;
+    if (f.get('finish')) setStatus(t, 'done');
+    setTimeout(() => flashTask(next.id));
+  });
+  const ta = $('#dlg textarea');
+  ta.focus();
+  ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ta.form.requestSubmit(); } };
+}
+function flashTask(id) {
+  const el = document.getElementById('t-' + id);
+  if (!el) return false;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  return true;
+}
+
 /* ----- 待办看板 ----- */
 // 第一行作标题，其余作描述
 function cardText(text) {
@@ -254,14 +295,14 @@ function viewBoard() {
     <div class="card" id="t-${t.id}">
       <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
       ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
-      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
+      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
       <div class="card-foot">
         ${t.status === 'todo' ? `
           <button class="done-btn" data-act="task-start" data-id="${t.id}">${ICON.play}开始处理</button>
-          <button class="icon-btn go" data-act="task-edit" data-id="${t.id}" title="详情 / 编辑">${ICON.arrow}</button>` : `
+` : `
           <button class="back-btn" data-act="task-back" data-id="${t.id}" title="退回到未完成">${ICON.undo}回退</button>
           <button class="done-btn" data-act="task-done" data-id="${t.id}">${ICON.check}完成</button>
-          <button class="icon-btn go" data-act="task-edit" data-id="${t.id}" title="详情 / 编辑">${ICON.arrow}</button>`}
+          <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>`}
         <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
       </div>
     </div>`;
@@ -865,6 +906,15 @@ document.addEventListener('click', e => {
     case 'toggle-meet-more': ui.meetMore = !ui.meetMore; saveUi(); render(); $('#meetInput').focus(); break;
     case 'fold': ui[el.dataset.key] = !ui[el.dataset.key]; saveUi(); render(); break;
     case 'task-edit': editTask(findTask(id)); break;
+    case 'task-next': newNextTask(findTask(id)); break;
+    case 'goto-task': {
+      e.stopPropagation();
+      const t = findTask(id);
+      if (!t) break;
+      if (t.status === 'done' && !t.deletedAt) { ui.doneOpen = true; saveUi(); render(); }
+      if (!flashTask(id)) editTask(t);
+      break;
+    }
     case 'task-start': setStatus(findTask(id), 'doing'); break;
     case 'task-back': setStatus(findTask(id), 'todo'); toast('已回退到未完成'); break;
     case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
