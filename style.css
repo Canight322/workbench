@@ -185,6 +185,15 @@ textarea.field { resize: vertical; min-height: 72px; }
 .rel:hover { filter: brightness(.96); }
 .dlg label.inline-check { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
 .inline-check input { accent-color: var(--green); width: 14px; height: 14px; margin: 0; }
+.done-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; padding: 8px 0 4px; }
+.done-card { background: color-mix(in srgb, var(--card) 70%, transparent); box-shadow: none; }
+.card-title.strike { text-decoration: line-through; color: var(--muted); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; color: var(--muted); font-size: 13px; }
+.done-meta .dm { display: inline-flex; align-items: center; gap: 5px; }
+.done-meta .dm svg { width: 14px; height: 14px; color: var(--faint); }
+.done-meta .dm b { font-weight: 500; }
+.reopen-btn { flex: 1; height: 28px; border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 13px; }
+.reopen-btn:hover { background: var(--green-bg); color: var(--green); }
 .card-time { font-family: var(--mono); font-size: 12px; color: var(--faint); line-height: 17px; }
 .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }

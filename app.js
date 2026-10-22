@@ -26,6 +26,8 @@ const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } ca
 
 const ICON = {
   list: '<svg viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M4 5l1.5 1.5L8 4M4 12h3M4 18h3"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  timer: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7"/><path d="M12 10v3.5l2 1.5M9.5 3h5M12 3v3.5"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
   chat: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
@@ -233,6 +235,22 @@ function dueTag(t) {
   return `<span class="tag">截止 ${md(parseYmd(dueDay(t)))}${clock}</span>`;
 }
 
+/* ----- 工时 ----- */
+// 只算工作日（周一至周五）WORK_START–WORK_END 之间、处于「进行期」的时间
+const WORK_START = [9, 0], WORK_END = [18, 30];
+function workMs(a, b) {
+  let total = 0;
+  for (let d = new Date(a); d.setHours(0, 0, 0, 0), d.getTime() < b; d.setDate(d.getDate() + 1)) {
+    const wd = d.getDay();
+    if (wd === 0 || wd === 6) continue;
+    const ds = new Date(d).setHours(...WORK_START, 0, 0), de = new Date(d).setHours(...WORK_END, 0, 0);
+    total += Math.max(0, Math.min(b, de) - Math.max(a, ds));
+  }
+  return total;
+}
+const workHours = t => phasesOf(t, t.doneAt || now()).segs.filter(g => g.s === 'doing').reduce((n, g) => n + workMs(g.a, g.b), 0) / 36e5;
+const fmtHours = h => (h > 0 && h < 0.05 ? '<0.1' : String(Math.round(h * 10) / 10)) + '小时';
+
 /* ----- 关联任务 ----- */
 // 子任务记录 parent；卡片上显示「接：上一步」和「后续 N」
 function relTags(t) {
@@ -335,15 +353,21 @@ function viewBoard() {
 
     <div class="panel fold ${ui.doneOpen ? 'open' : ''}">
       <button class="fold-head" data-act="fold" data-key="doneOpen"><span class="dot" style="background:var(--green)"></span>已完成<span class="n">${done.length}</span><span class="chev">${ICON.down}</span></button>
-      ${ui.doneOpen ? `<div class="fold-body">${done.map(t => `
-        <div class="row">
-          <span style="color:var(--green)">${ICON.check}</span>
-          <span class="row-text strike" data-act="task-edit" data-id="${t.id}">${esc(firstLine(t.text))}</span>
-          ${ui.project === 'all' ? projectTag(t.project) : ''}
-          <span class="row-time">${fmtTime(t.doneAt)}</span>
-          <button class="btn sm" data-act="task-reopen" data-id="${t.id}">撤回</button>
-          <button class="btn sm danger" data-act="task-del" data-id="${t.id}">删除</button>
-        </div>`).join('') || '<div class="empty">还没有完成的任务</div>'}</div>` : ''}
+      ${ui.doneOpen ? `<div class="fold-body">${done.length ? `<div class="done-grid">${done.map(t => {
+        const d = new Date(t.doneAt);
+        return `<div class="card done-card" id="t-${t.id}">
+          <div class="card-title strike" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}">${esc(firstLine(t.text))}</div>
+          <div class="done-meta">
+            <span class="dm" title="完成时间">${ICON.clock}<b class="mono">${mdSlash(d)} 周${WEEK[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}</b></span>
+            <span class="dm" title="工时：工作日 ${WORK_START.map(pad).join(':')}–${WORK_END.map(pad).join(':')} 内的进行时长">${ICON.timer}${fmtHours(workHours(t))}</span>
+            ${ui.project === 'all' ? projectTag(t.project) : ''}${relTags(t)}
+          </div>
+          <div class="card-foot">
+            <button class="reopen-btn" data-act="task-reopen" data-id="${t.id}">重新打开</button>
+            <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+          </div>
+        </div>`;
+      }).join('')}</div>` : '<div class="empty">还没有完成的任务</div>'}</div>` : ''}
     </div>
 
     <div class="panel fold ${ui.delOpen ? 'open' : ''}">
