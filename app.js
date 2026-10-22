@@ -186,8 +186,9 @@ function weekMeetings() {
 
 function renderStats() {
   const tasks = liveTasks(), t0 = today();
-  const dueToday = tasks.filter(t => t.status !== 'done' && t.due === t0).length;
-  const overdue = tasks.filter(t => t.status !== 'done' && t.due && t.due < t0).length;
+  const open = tasks.filter(t => t.status !== 'done' && t.due);
+  const overdue = open.filter(isOverdue).length;
+  const dueToday = open.filter(t => dueDay(t) === t0 && !isOverdue(t)).length;
   const doing = tasks.filter(t => t.status === 'doing').length;
   const wm = weekMeetings().length;
   $('#stats').innerHTML = `
@@ -210,12 +211,25 @@ function projectTag(id) {
   const p = projectOf(id);
   return p && !p.deletedAt ? `<span class="tag"><span class="dot" style="background:${p.color}"></span>${esc(p.name)}</span>` : '';
 }
+// 截止时间：'YYYY-MM-DD'（当天结束前）或 'YYYY-MM-DDTHH:mm'
+const dueDay = t => t.due.slice(0, 10);
+const dueClock = t => t.due.slice(11, 16);
+const dueTs = t => (dueClock(t) ? new Date(t.due).getTime() : addDays(parseYmd(dueDay(t)), 1).getTime() - 1);
+const isOverdue = t => !!t.due && t.status !== 'done' && now() > dueTs(t);
+const readDue = (f, prefix = 'due') => {
+  const d = f.get(prefix + 'Date'), tm = f.get(prefix + 'Time');
+  return d ? (tm ? `${d}T${tm}` : d) : '';
+};
+const dueFields = (due = '') => `<div class="due-pair">
+  <input class="field" type="date" name="dueDate" value="${esc(due.slice(0, 10))}">
+  <input class="field" type="time" name="dueTime" value="${esc(due.slice(11, 16))}" title="时间可不填">
+</div>`;
 function dueTag(t) {
   if (!t.due || t.status === 'done') return '';
-  const t0 = today();
-  const cls = t.due < t0 ? 'red' : t.due === t0 ? 'orange' : '';
-  const label = t.due < t0 ? '已逾期 ' : t.due === t0 ? '今天到期' : '截止 ';
-  return `<span class="tag ${cls}">${label}${t.due === t0 ? '' : md(parseYmd(t.due))}</span>`;
+  const clock = dueClock(t) ? ' ' + dueClock(t) : '';
+  if (isOverdue(t)) return `<span class="tag red">已逾期 ${dueDay(t) === today() ? '今天' : md(parseYmd(dueDay(t)))}${clock}</span>`;
+  if (dueDay(t) === today()) return `<span class="tag orange">今天${clock}到期</span>`;
+  return `<span class="tag">截止 ${md(parseYmd(dueDay(t)))}${clock}</span>`;
 }
 
 /* ----- 待办看板 ----- */
@@ -261,7 +275,7 @@ function viewBoard() {
       </div>
       ${ui.more ? `<div class="composer-more">
         <label>项目<select class="field" name="project">${projectOptions(ui.project !== 'all' ? ui.project : '')}</select></label>
-        <label>截止日期<input class="field" type="date" name="due"></label>
+        <label class="span2">截止时间（可只填日期）${dueFields()}</label>
         <label class="wide">备注<input class="field" name="note" placeholder="可选"></label>
       </div>` : ''}
     </form>
@@ -535,7 +549,7 @@ function editTask(t) {
       <label>项目<select class="field" name="project">${projectOptions(t.project)}</select></label>
       <label>状态<select class="field" name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     </div>
-    <label>截止日期<input class="field" type="date" name="due" value="${esc(t.due)}"></label>
+    <label>截止时间（可只填日期，也可不填）${dueFields(t.due)}</label>
     <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
     <div class="grid3 even">
       <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
@@ -564,7 +578,7 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: f.get('due'), note: f.get('note'), ...times });
+    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), ...times });
   });
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
@@ -902,7 +916,7 @@ document.addEventListener('submit', e => {
     const fd = new FormData(f);
     if (!fd.get('text').trim()) return;
     f.reset();
-    addTask(fd.get('text'), { project: fd.get('project') ?? undefined, due: fd.get('due') || '', note: fd.get('note') || '' });
+    addTask(fd.get('text'), { project: fd.get('project') ?? undefined, due: readDue(fd), note: fd.get('note') || '' });
     $('#taskInput').focus();
   }
   if (f.id === 'meetForm') {
