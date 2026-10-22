@@ -335,8 +335,8 @@ function viewCalendar() {
       </div>
       <div class="legend">${ui.calMode === 'week' ? `
         <span><i class="mk-mini"></i>创建</span><span><i class="ph-todo"></i>待办期</span><span><i class="mk-mini start"></i>开始</span>
-        <span><i class="ph-doing"></i>进行期</span><span><i class="mk-mini done"></i>完成</span><span><i class="ph-meet"></i>会议</span><span><i class="lg-now"></i>现在</span>` : `
-        <span><i class="ev-create"></i>创建</span><span><i class="ev-start"></i>开始</span><span><i class="ev-done"></i>完成</span><span><i class="st-meet"></i>会议</span>`}
+        <span><i class="ph-doing"></i>进行期</span><span><i class="mk-mini done"></i>完成</span><span><i class="lg-now"></i>现在</span>` : `
+        <span><i class="ev-done"></i>当天完成的任务</span>`}
       </div>
       <div class="cal-scroll">${body}</div>
     </div>`;
@@ -401,26 +401,12 @@ function weekView(s) {
     </div>` };
   }).filter(Boolean).sort((a, b) => a.first - b.first);
 
-  const meets = liveMeetings().filter(m => m.date >= days[0] && m.date <= days[6])
-    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).map(m => {
-      const a = new Date(`${m.date}T${m.start || '09:00'}`).getTime();
-      const b = m.end ? new Date(`${m.date}T${m.end}`).getTime() : a + 36e5;
-      return `<div class="week-row">
-        <div class="wk-label" style="grid-column:1" data-act="meet-edit" data-id="${m.id}"><span class="dot" style="background:var(--purple)"></span><span>${esc(m.title)}</span></div>
-        ${cells()}
-        <div class="wk-track" data-act="meet-edit" data-id="${m.id}">
-          <div class="ph ph-meet" style="left:${pct(a)}%;width:${pct(Math.max(b, a)) - pct(a)}%" title="${esc(m.title)} ${m.start || ''}–${m.end || ''}"></div>
-          ${note(a, b, `<b class="mt">会议</b> ${esc(m.start || '')}${m.end ? '–' + esc(m.end) : ''}`)}${nowLine}
-        </div>
-      </div>`;
-    });
-
   function cells() { return days.map((d, i) => `<div class="wk-cell ${d === t0 ? 'is-today' : ''}" style="grid-column:${i + 2}"></div>`).join(''); }
 
   return `<div class="week">
     <div class="week-row head"><div>任务</div>${days.map((d, i) => `<div class="${d === t0 ? 'is-today' : ''}">${WEEK[i]}<b>${mdSlash(parseYmd(d))}</b></div>`).join('')}</div>
-    ${rows.map(r => r.html).join('')}${meets.join('')}
-    ${rows.length + meets.length ? '' : `<div class="week-row"><div class="empty" style="grid-column:1/-1">本周没有任务记录</div></div>`}
+    ${rows.map(r => r.html).join('')}
+    ${rows.length ? '' : `<div class="week-row"><div class="empty" style="grid-column:1/-1">本周没有任务记录</div></div>`}
   </div>`;
 }
 
@@ -430,21 +416,18 @@ function monthView(base) {
   const lastDay = new Date(y, mo + 1, 0);
   const weeks = Math.ceil((Math.round((lastDay - start) / 864e5) + 1) / 7);
   const t0 = today();
-  const tasks = liveTasks(), meets = liveMeetings();
-  // 每天发生的状态变化（创建 / 开始 / 完成）
-  const dayEvents = tasks.flatMap(task => logOf(task).filter(e => ['create', 'start', 'done'].includes(e.a)).map(e => ({ ...e, task, day: ymd(e.t) })))
-    .sort((a, b) => a.t - b.t);
+  // 月视图只看已完成的任务，按完成时间归到当天
+  const done = liveTasks().filter(t => t.status === 'done' && t.doneAt).sort((a, b) => a.doneAt - b.doneAt);
   const cells = [];
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i), ds = ymd(d);
-    const items = [
-      ...dayEvents.filter(e => e.day === ds).map(e => ({ cls: 'ev-' + e.a, text: `${LOG_TEXT[e.a]} · ${firstLine(e.task.text)}`, tip: `${shortTime(e.t)} ${LOG_TEXT[e.a]}：${e.task.text}`, act: 'task-edit', id: e.task.id })),
-      ...tasks.filter(t => t.status !== 'done' && t.due === ds).map(t => ({ cls: 'ev-due', text: `截止 · ${firstLine(t.text)}`, tip: `截止：${t.text}`, act: 'task-edit', id: t.id })),
-      ...meets.filter(m => m.date === ds).map(m => ({ cls: 'st-meet', text: `${m.start || ''} ${m.title}`, tip: m.title, act: 'meet-edit', id: m.id })),
-    ];
+    const items = done.filter(t => ymd(t.doneAt) === ds).map(t => ({
+      cls: 'ev-done', text: firstLine(t.text), act: 'task-edit', id: t.id,
+      tip: `${shortTime(t.doneAt)} 完成 · 共 ${fmtDur(t.doneAt - t.createdAt)}\n${t.text}`,
+    }));
     const shown = items.slice(0, 3);
     cells.push(`<div class="m-cell ${d.getMonth() !== mo ? 'out' : ''} ${ds === t0 ? 'is-today' : ''}">
-      <span class="m-day">${d.getDate()}</span>
+      <span class="m-day">${d.getDate()}</span>${items.length ? `<span class="m-count">✓ ${items.length}</span>` : ''}
       ${shown.map(it => `<div class="m-chip ${it.cls}" data-act="${it.act}" data-id="${it.id}" title="${esc(it.tip)}">${esc(it.text)}</div>`).join('')}
       ${items.length > 3 ? `<span class="m-more" title="${esc(items.slice(3).map(i => i.text).join('\n'))}">+${items.length - 3} 项</span>` : ''}
     </div>`);
