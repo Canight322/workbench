@@ -14,6 +14,8 @@ const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
 const md = d => { d = new Date(d); return `${d.getMonth() + 1}月${d.getDate()}日`; };
 const mdSlash = d => { d = new Date(d); return `${d.getMonth() + 1}/${d.getDate()}`; };
 const fmtTime = t => { const d = new Date(t); return `${ymd(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const toLocalInput = ts => { if (!ts) return ''; const d = new Date(ts); return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fromLocalInput = v => (v ? new Date(v).getTime() || 0 : 0);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => ymd(new Date());
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -461,7 +463,12 @@ function editTask(t) {
     </div>
     <label>截止日期<input class="field" type="date" name="due" value="${esc(t.due)}"></label>
     <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
-    <p class="hint">创建 ${fmtTime(t.createdAt)}${t.startedAt ? ` · 开始 ${fmtTime(t.startedAt)}` : ''}${t.doneAt ? ` · 完成 ${fmtTime(t.doneAt)}` : ''}</p>
+    <div class="grid3">
+      <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
+      <label>开始时间<input class="field" type="datetime-local" name="startedAt" value="${toLocalInput(t.startedAt)}"></label>
+      <label>完成时间<input class="field" type="datetime-local" name="doneAt" value="${toLocalInput(t.doneAt)}"></label>
+    </div>
+    <p class="hint">开始 / 完成时间留空时，切换状态会自动记为当前时间，补录历史任务时可手动修改。</p>
     <div class="acts">
       <button type="button" class="btn danger left" id="dlgDel">删除</button>
       <button type="button" class="btn" data-close>取消</button>
@@ -470,7 +477,13 @@ function editTask(t) {
   </form>`, f => {
     const status = f.get('status');
     if (status !== t.status) setStatus(t, status);
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: f.get('due'), note: f.get('note') });
+    // 手填的时间优先于状态切换时自动记录的时间
+    const times = {};
+    const created = fromLocalInput(f.get('createdAt')), started = fromLocalInput(f.get('startedAt')), done = fromLocalInput(f.get('doneAt'));
+    if (created) times.createdAt = created;
+    if (t.status !== 'todo' && started) times.startedAt = started;
+    if (t.status === 'done' && done) times.doneAt = done;
+    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: f.get('due'), note: f.get('note'), ...times });
   });
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
@@ -607,8 +620,11 @@ function openSettings() {
   };
   $('#importBtn').onclick = () => {
     const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = 'application/json,.json';
+    inp.type = 'file'; inp.accept = 'application/json,.json'; inp.hidden = true;
+    // 文件框需挂在弹窗内：弹窗打开时页面其余部分是 inert，挂在外面不会触发 change
+    dlg.appendChild(inp);
     inp.onchange = async () => {
+      inp.remove();
       try {
         const data = JSON.parse(await inp.files[0].text());
         if (!Array.isArray(data.tasks)) throw new Error('格式不正确');
