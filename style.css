@@ -218,7 +218,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
 .tbl td.ops { white-space: nowrap; text-align: right; }
 
 /* calendar */
-.cal { padding: 16px 18px 18px; }
+.cal { padding: 16px 18px 18px; margin-top: 14px; }
 .cal-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .cal-title { font-size: 15px; font-weight: 700; padding-left: 10px; border-left: 3px solid var(--green); margin-right: auto; line-height: 1.2; }
 .seg { display: inline-flex; padding: 3px; background: var(--hover); border-radius: 9px; }

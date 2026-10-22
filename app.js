@@ -147,8 +147,8 @@ function render() {
   const kept = $$('#view form [name]').map(el => [el.form.id, el.name, el.value]);
   const af = document.activeElement;
   const focus = af?.form?.id && af.name && v.contains(af) ? [af.form.id, af.name] : null;
-  if (ui.tab === 'board') v.innerHTML = viewBoard();
-  else if (ui.tab === 'calendar') v.innerHTML = viewCalendar();
+  if (ui.tab === 'calendar') ui.tab = 'board';  // 完成日历已并入看板页
+  if (ui.tab === 'board') v.innerHTML = viewBoard() + viewCalendar();
   else v.innerHTML = viewMeetings();
   for (const [f, n, val] of kept) { const el = $(`#${f} [name="${n}"]`); if (el) el.value = val; }
   if (focus) $(`#${focus[0]} [name="${focus[1]}"]`)?.focus();
@@ -926,7 +926,6 @@ document.addEventListener('keydown', e => {
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault();
-    if (ui.tab !== 'board' && ui.tab !== 'meetings') { ui.tab = 'board'; saveUi(); render(); }
     const inp = $(ui.tab === 'meetings' ? '#meetInput' : '#taskInput');
     inp.scrollIntoView({ block: 'center' }); inp.focus();
   }
