@@ -195,6 +195,12 @@ textarea.field { resize: vertical; min-height: 72px; }
 .done-meta .dm b { font-weight: 500; }
 .reopen-btn { flex: 1; height: 28px; border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 13px; }
 .reopen-btn:hover { background: var(--green-bg); color: var(--green); }
+.todo-card { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; }
+.card-main { flex: 1; min-width: 0; }
+.card-side { display: flex; align-items: center; gap: 6px; flex: none; }
+.start-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 12px; border-radius: 7px; background: var(--green-bg); color: var(--green); font-size: 13px; white-space: nowrap; }
+.start-btn:hover { background: var(--green-bg-2); }
+.start-btn svg { width: 12px; height: 12px; }
 .card-time { font-family: var(--mono); font-size: 12px; color: var(--faint); line-height: 17px; }
 .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
@@ -405,6 +411,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
   .week-row { grid-template-columns: 110px repeat(7, 1fr); }
   .wk-label { padding: 0 8px; }
   .wk-note { display: none; }
+  .start-btn { width: 28px; padding: 0; justify-content: center; }
+  .start-btn .lbl { display: none; }
+  .todo-card { gap: 10px; }
 }
 
 .fatal { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 100; width: min(520px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--red); border-radius: 12px; padding: 14px 16px; box-shadow: 0 12px 32px rgba(0,0,0,.15); display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
