@@ -238,7 +238,7 @@ function viewBoard() {
   const card = t => `
     <div class="card" id="t-${t.id}">
       <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
-      ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}"><span>备注</span>${esc(t.note.trim())}</div>` : ''}
+      ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
       <div class="card-foot">
         ${t.status === 'todo' ? `
