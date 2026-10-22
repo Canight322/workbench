@@ -181,8 +181,13 @@ textarea.field { resize: vertical; min-height: 72px; }
 .card.flash { animation: flash 1.4s; }
 @keyframes flash { 0%, 40% { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-bg); } }
 .card-text { cursor: pointer; word-break: break-word; }
-.card-title { font-size: 14px; font-weight: 600; line-height: 1.5; }
-.card-desc { margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--muted); white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.card-title { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.card-desc { margin-top: 3px; font-size: 12px; line-height: 1.6; color: var(--muted); white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.card-note { margin-top: 8px; padding: 6px 10px; border-radius: 6px; background: var(--hover); border-left: 2px solid var(--line-2); font-size: 12px; line-height: 1.6; color: var(--muted); white-space: pre-wrap; word-break: break-word; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.card-note span { color: var(--faint); font-size: 11px; margin-right: 6px; }
+.back-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 12px; }
+.back-btn:hover { background: var(--orange-bg); color: var(--orange); }
+.back-btn svg { width: 13px; height: 13px; }
 .card-time { font-family: var(--mono); font-size: 11px; color: var(--faint); }
 .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }

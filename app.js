@@ -29,6 +29,7 @@ const ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>',
   arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
@@ -237,12 +238,13 @@ function viewBoard() {
   const card = t => `
     <div class="card" id="t-${t.id}">
       <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
+      ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}"><span>备注</span>${esc(t.note.trim())}</div>` : ''}
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
       <div class="card-foot">
         ${t.status === 'todo' ? `
           <label class="check"><input type="checkbox" data-act="task-start" data-id="${t.id}">开始处理</label>
           <span class="spacer"></span>` : `
-          <label class="check on"><input type="checkbox" checked data-act="task-unstart" data-id="${t.id}">进行中</label>
+          <button class="back-btn" data-act="task-back" data-id="${t.id}" title="退回到未完成">${ICON.undo}回退</button>
           <button class="done-btn" data-act="task-done" data-id="${t.id}">${ICON.check}完成</button>
           <button class="icon-btn go" data-act="task-edit" data-id="${t.id}" title="详情 / 编辑">${ICON.arrow}</button>`}
         <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
@@ -848,6 +850,7 @@ document.addEventListener('click', e => {
     case 'toggle-meet-more': ui.meetMore = !ui.meetMore; saveUi(); render(); $('#meetInput').focus(); break;
     case 'fold': ui[el.dataset.key] = !ui[el.dataset.key]; saveUi(); render(); break;
     case 'task-edit': editTask(findTask(id)); break;
+    case 'task-back': setStatus(findTask(id), 'todo'); toast('已回退到未完成'); break;
     case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
     case 'task-reopen': setStatus(findTask(id), 'doing'); break;
     case 'task-del': removeTask(findTask(id)); break;
@@ -880,7 +883,6 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.dataset.act === 'task-start') setStatus(findTask(el.dataset.id), 'doing');
-  if (el.dataset.act === 'task-unstart') setStatus(findTask(el.dataset.id), 'todo');
   if (['mProject', 'mType', 'mFrom', 'mTo'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
 });
 
