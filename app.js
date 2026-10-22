@@ -175,8 +175,6 @@ function renderNav() {
 function renderHeader() {
   const d = new Date();
   $('#todayLabel').textContent = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 周${WEEK[d.getDay()]}`;
-  const open = liveTasks().filter(t => t.status !== 'done').length;
-  $('#summary').innerHTML = `<span class="dot"></span><b>${open}</b> 项待办 · <b>${weekMeetings().length}</b> 场会议`;
   renderSync();
 }
 
@@ -192,16 +190,14 @@ function renderStats() {
   const dueToday = open.filter(t => dueDay(t) === t0 && !isOverdue(t)).length;
   const doing = tasks.filter(t => t.status === 'doing').length;
   const wm = weekMeetings().length;
-  $('#stats').innerHTML = `
-    <div class="stat"><div class="stat-icon orange">${ICON.list}</div><div>
-      <div class="stat-label">今日待办</div><div class="stat-num">${dueToday}<small>项</small></div>
-      <div class="stat-sub orange">今天到期${overdue ? ` · <span class="warn">逾期 ${overdue}</span>` : ''}</div></div></div>
-    <div class="stat"><div class="stat-icon green">${ICON.play}</div><div>
-      <div class="stat-label">进行中</div><div class="stat-num">${doing}<small>项</small></div>
-      <div class="stat-sub green">正在处理</div></div></div>
-    <div class="stat"><div class="stat-icon purple">${ICON.chat}</div><div>
-      <div class="stat-label">本周会议</div><div class="stat-num">${wm}<small>场</small></div>
-      <div class="stat-sub purple">本周安排</div></div></div>`;
+  const item = (cls, icon, label, num, unit, extra = '') => `
+    <div class="stat"><span class="stat-icon ${cls}">${icon}</span><div>
+      <div class="stat-label">${label}</div>
+      <div class="stat-num">${num}<small>${unit}</small>${extra}</div></div></div>`;
+  $('#stats').innerHTML =
+    item('orange', ICON.list, '今日到期', dueToday, '项', overdue ? `<span class="warn">逾期 ${overdue}</span>` : '') +
+    item('green', ICON.play, '进行中', doing, '项') +
+    item('purple', ICON.chat, '本周会议', wm, '场');
 }
 
 const projectOptions = (sel, allLabel) =>
