@@ -147,8 +147,9 @@ function render() {
   const kept = $$('#view form [name]').map(el => [el.form.id, el.name, el.value]);
   const af = document.activeElement;
   const focus = af?.form?.id && af.name && v.contains(af) ? [af.form.id, af.name] : null;
-  if (ui.tab === 'calendar') ui.tab = 'board';  // 完成日历已并入看板页
-  if (ui.tab === 'board') v.innerHTML = viewBoard() + viewCalendar();
+  if (ui.tab === 'calendar') ui.tab = 'board';  // 完成日历已固定显示在标签栏上方
+  $('#calendar').innerHTML = viewCalendar();
+  if (ui.tab === 'board') v.innerHTML = viewBoard();
   else v.innerHTML = viewMeetings();
   for (const [f, n, val] of kept) { const el = $(`#${f} [name="${n}"]`); if (el) el.value = val; }
   if (focus) $(`#${focus[0]} [name="${focus[1]}"]`)?.focus();
