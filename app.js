@@ -336,11 +336,11 @@ function viewBoard() {
         <button type="button" class="btn" data-act="toggle-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
-      ${ui.more ? `<div class="composer-more">
+      ${`<div class="composer-more" ${ui.more ? '' : 'hidden'}>
         <label>项目<select class="field" name="project">${projectOptions(ui.project !== 'all' ? ui.project : '')}</select></label>
         <label class="span2">截止时间（可只填日期）${dueFields()}</label>
         <label class="wide">备注<input class="field" name="note" placeholder="可选"></label>
-      </div>` : ''}
+      </div>`}
     </form>
 
     <div class="board">
@@ -564,7 +564,7 @@ function viewMeetings() {
         <button type="button" class="btn" data-act="toggle-meet-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
-      ${ui.meetMore ? `<div class="composer-more inline-form">${meetingFields()}</div>` : ''}
+      <div class="composer-more inline-form" ${ui.meetMore ? '' : 'hidden'}>${meetingFields()}</div>
     </form>
 
     <div class="panel filters">
@@ -974,6 +974,27 @@ document.addEventListener('click', e => {
   }
 });
 
+// 点击输入卡片以外的地方时，自动折叠「更多」
+// 等这次点击完成后再折叠：立刻折叠会让下方内容上移，鼠标松开时已不在原按钮上，点击就丢了
+let foldTargets = [];
+document.addEventListener('pointerdown', e => {
+  if (dlg.open) return;
+  foldTargets = [['more', '#taskForm'], ['meetMore', '#meetForm']].filter(([key, form]) => ui[key] && !e.target.closest(form));
+});
+document.addEventListener('pointerup', () => {
+  if (!foldTargets.length) return;
+  const targets = foldTargets;
+  foldTargets = [];
+  setTimeout(() => {
+    for (const [key, form] of targets) {
+      ui[key] = false;
+      const panel = $(`${form} .composer-more`);
+      if (panel) panel.hidden = true;
+    }
+    saveUi();
+  });
+});
+
 document.addEventListener('change', e => {
   const el = e.target;
   if (['mProject', 'mType', 'mFrom', 'mTo'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
@@ -994,8 +1015,8 @@ document.addEventListener('submit', e => {
     e.preventDefault();
     const fd = new FormData(f);
     if (!fd.get('text').trim()) return;
-    f.reset();
-    addTask(fd.get('text'), { project: fd.get('project') ?? undefined, due: readDue(fd), note: fd.get('note') || '' });
+    if (ui.more) f.reset(); else f.text.value = '';
+    addTask(fd.get('text'), ui.more ? { project: fd.get('project'), due: readDue(fd), note: fd.get('note') || '' } : {});
     $('#taskInput').focus();
   }
   if (f.id === 'meetForm') {
@@ -1003,7 +1024,7 @@ document.addEventListener('submit', e => {
     const fd = new FormData(f);
     const title = fd.get('title').trim();
     if (!title) return;
-    f.reset();
+    if (ui.meetMore) f.reset(); else f.title.value = '';
     const base = ui.meetMore ? readMeeting(fd) : (() => { const [d, s, en] = nowSlot(); return { date: d, start: s, end: en, type: '其他', project: ui.project !== 'all' ? ui.project : '', points: '', conclusion: '' }; })();
     const m = { id: uid(), title, ...base, createdAt: now(), deletedAt: 0, u: now() };
     db.meetings.push(m);
