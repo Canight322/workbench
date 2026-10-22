@@ -18,6 +18,7 @@ const toLocalInput = ts => { if (!ts) return ''; const d = new Date(ts); return 
 const fromLocalInput = v => (v ? new Date(v).getTime() || 0 : 0);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => ymd(new Date());
+const firstLine = s => String(s || '').split('\n')[0];
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 隐私模式等 */ } };
 
@@ -187,6 +188,14 @@ function dueTag(t) {
 }
 
 /* ----- 待办看板 ----- */
+// 第一行作标题，其余作描述
+function cardText(text) {
+  const [title, ...rest] = text.split('\n');
+  const desc = rest.join('\n').trim();
+  return `<div class="card-title">${esc(title)}</div>${desc ? `<div class="card-desc">${esc(desc)}</div>` : ''}`;
+}
+const shortTime = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
 function viewBoard() {
   const tasks = liveTasks();
   const byCreated = (a, b) => a.createdAt - b.createdAt;
@@ -197,8 +206,8 @@ function viewBoard() {
 
   const card = t => `
     <div class="card" id="t-${t.id}">
-      <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${esc(t.text)}</div>
-      ${projectTag(t.project) || dueTag(t) ? `<div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}</div>` : ''}
+      <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
+      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>
       <div class="card-foot">
         ${t.status === 'todo' ? `
           <label class="check"><input type="checkbox" data-act="task-start" data-id="${t.id}">开始处理</label>
@@ -241,7 +250,7 @@ function viewBoard() {
       ${ui.doneOpen ? `<div class="fold-body">${done.map(t => `
         <div class="row">
           <span style="color:var(--green)">${ICON.check}</span>
-          <span class="row-text strike" data-act="task-edit" data-id="${t.id}">${esc(t.text)}</span>
+          <span class="row-text strike" data-act="task-edit" data-id="${t.id}">${esc(firstLine(t.text))}</span>
           ${ui.project === 'all' ? projectTag(t.project) : ''}
           <span class="row-time">${fmtTime(t.doneAt)}</span>
           <button class="btn sm" data-act="task-reopen" data-id="${t.id}">撤回</button>
@@ -254,7 +263,7 @@ function viewBoard() {
       ${ui.delOpen ? `<div class="fold-body">${deleted.length ? `<div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>任务</th><th>项目</th><th>删除前状态</th><th>创建时间</th><th>删除时间</th><th></th></tr></thead>
         <tbody>${deleted.map(t => `<tr>
-          <td class="t" title="${esc(t.text)}">${esc(t.text)}</td>
+          <td class="t" title="${esc(t.text)}">${esc(firstLine(t.text))}</td>
           <td>${projectTag(t.project) || '<span class="tag">—</span>'}</td>
           <td>${STATUS[t.status]}</td>
           <td class="mono row-time">${fmtTime(t.createdAt)}</td>
@@ -327,8 +336,8 @@ function weekView(s) {
   return `<div class="week">
     <div class="week-row head"><div>任务</div>${days.map((d, i) => `<div class="${d === t0 ? 'is-today' : ''}">${WEEK[i]}<b>${mdSlash(parseYmd(d))}</b></div>`).join('')}</div>
     ${rows.map(({ t, span }) => `<div class="week-row">
-      <div class="wk-label" style="grid-column:1" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(t.text)}</span></div>
-      ${cells()}${bar(span[0] < first ? first : span[0], span[1] > last ? last : span[1], 'st-' + t.status, t.text, 'task-edit', t.id)}
+      <div class="wk-label" style="grid-column:1" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(firstLine(t.text))}</span></div>
+      ${cells()}${bar(span[0] < first ? first : span[0], span[1] > last ? last : span[1], 'st-' + t.status, firstLine(t.text), 'task-edit', t.id)}
     </div>`).join('')}
     ${meets.map(m => `<div class="week-row">
       <div class="wk-label" style="grid-column:1" data-act="meet-edit" data-id="${m.id}"><span class="dot" style="background:var(--purple)"></span><span>${esc(m.title)}</span></div>
@@ -349,8 +358,8 @@ function monthView(base) {
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i), ds = ymd(d);
     const items = [
-      ...tasks.filter(t => t.status === 'done' && ymd(t.doneAt) === ds).map(t => ({ cls: 'st-done', text: t.text, act: 'task-edit', id: t.id })),
-      ...tasks.filter(t => t.status !== 'done' && t.due === ds).map(t => ({ cls: 'st-' + t.status, text: t.text, act: 'task-edit', id: t.id })),
+      ...tasks.filter(t => t.status === 'done' && ymd(t.doneAt) === ds).map(t => ({ cls: 'st-done', text: firstLine(t.text), act: 'task-edit', id: t.id })),
+      ...tasks.filter(t => t.status !== 'done' && t.due === ds).map(t => ({ cls: 'st-' + t.status, text: firstLine(t.text), act: 'task-edit', id: t.id })),
       ...meets.filter(m => m.date === ds).map(m => ({ cls: 'st-meet', text: `${m.start || ''} ${m.title}`, act: 'meet-edit', id: m.id })),
     ];
     const shown = items.slice(0, 3);
@@ -549,7 +558,7 @@ function openSearch() {
   const draw = () => {
     const q = input.value.trim().toLowerCase();
     const tasks = db.tasks.filter(t => !t.deletedAt && (!q || (t.text + ' ' + t.note).toLowerCase().includes(q)))
-      .sort((a, b) => b.u - a.u).map(t => ({ kind: 'task', o: t, label: t.text, tag: STATUS[t.status] }));
+      .sort((a, b) => b.u - a.u).map(t => ({ kind: 'task', o: t, label: firstLine(t.text), tag: STATUS[t.status] }));
     const meets = db.meetings.filter(m => !m.deletedAt && (!q || [m.title, m.points, m.conclusion].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => b.u - a.u).map(m => ({ kind: 'meet', o: m, label: m.title, tag: '会议 ' + mdSlash(parseYmd(m.date)) }));
     hits = [...tasks, ...meets].slice(0, 30);
