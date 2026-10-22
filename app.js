@@ -316,7 +316,7 @@ function viewBoard() {
       <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
       ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
-  // 未完成卡片：操作按钮放在右侧，不单独占一行
+  // 操作按钮放在卡片右侧，不单独占一行；进行中卡片为「完成」+ 一排小图标
   const card = t => t.status === 'todo' ? `
     <div class="card todo-card" id="t-${t.id}">
       <div class="card-main">${cardBody(t)}</div>
@@ -325,12 +325,15 @@ function viewBoard() {
         <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
       </div>
     </div>` : `
-    <div class="card" id="t-${t.id}">${cardBody(t)}
-      <div class="card-foot">
-        <button class="back-btn" data-act="task-back" data-id="${t.id}" title="退回到未完成">${ICON.undo}回退</button>
-        <button class="done-btn" data-act="task-done" data-id="${t.id}">${ICON.check}完成</button>
-        <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>
-        <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+    <div class="card todo-card doing-card" id="t-${t.id}">
+      <div class="card-main">${cardBody(t)}</div>
+      <div class="card-side stack">
+        <button class="start-btn" data-act="task-done" data-id="${t.id}" title="完成">${ICON.check}<span class="lbl">完成</span></button>
+        <div class="side-icons">
+          <button class="icon-btn back" data-act="task-back" data-id="${t.id}" title="回退到未完成">${ICON.undo}</button>
+          <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>
+          <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+        </div>
       </div>
     </div>`;
 

@@ -198,6 +198,10 @@ textarea.field { resize: vertical; min-height: 72px; }
 .todo-card { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; }
 .card-main { flex: 1; min-width: 0; }
 .card-side { display: flex; align-items: center; gap: 6px; flex: none; }
+.card-side.stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.card-side.stack .start-btn { justify-content: center; }
+.side-icons { display: flex; gap: 4px; }
+.icon-btn.back:hover { background: var(--orange-bg); color: var(--orange); }
 .start-btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 12px; border-radius: 7px; background: var(--green-bg); color: var(--green); font-size: 13px; white-space: nowrap; }
 .start-btn:hover { background: var(--green-bg-2); }
 .start-btn svg { width: 12px; height: 12px; }
@@ -411,8 +415,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
   .week-row { grid-template-columns: 110px repeat(7, 1fr); }
   .wk-label { padding: 0 8px; }
   .wk-note { display: none; }
-  .start-btn { width: 28px; padding: 0; justify-content: center; }
-  .start-btn .lbl { display: none; }
+  .todo-card:not(.doing-card) .start-btn { width: 28px; padding: 0; justify-content: center; }
+  .todo-card:not(.doing-card) .start-btn .lbl { display: none; }
   .todo-card { gap: 10px; }
 }
 
