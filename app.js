@@ -236,15 +236,18 @@ function dueTag(t) {
 }
 
 /* ----- 工时 ----- */
-// 只算工作日（周一至周五）WORK_START–WORK_END 之间、处于「进行期」的时间
-const WORK_START = [9, 0], WORK_END = [18, 30];
+// 只算工作日（周一至周五）上班时段内、处于「进行期」的时间；午休不计
+const WORK_WINDOWS = [[[9, 0], [12, 0]], [[13, 30], [18, 30]]];
+const WORK_LABEL = WORK_WINDOWS.map(w => w.map(([h, m]) => `${pad(h)}:${pad(m)}`).join('–')).join('、');
 function workMs(a, b) {
   let total = 0;
   for (let d = new Date(a); d.setHours(0, 0, 0, 0), d.getTime() < b; d.setDate(d.getDate() + 1)) {
     const wd = d.getDay();
     if (wd === 0 || wd === 6) continue;
-    const ds = new Date(d).setHours(...WORK_START, 0, 0), de = new Date(d).setHours(...WORK_END, 0, 0);
-    total += Math.max(0, Math.min(b, de) - Math.max(a, ds));
+    for (const [[sh, sm], [eh, em]] of WORK_WINDOWS) {
+      const ws = new Date(d).setHours(sh, sm, 0, 0), we = new Date(d).setHours(eh, em, 0, 0);
+      total += Math.max(0, Math.min(b, we) - Math.max(a, ws));
+    }
   }
   return total;
 }
@@ -359,7 +362,7 @@ function viewBoard() {
           <div class="card-title strike" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}">${esc(firstLine(t.text))}</div>
           <div class="done-meta">
             <span class="dm" title="完成时间">${ICON.clock}<b class="mono">${mdSlash(d)} 周${WEEK[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}</b></span>
-            <span class="dm" title="工时：工作日 ${WORK_START.map(pad).join(':')}–${WORK_END.map(pad).join(':')} 内的进行时长">${ICON.timer}${fmtHours(workHours(t))}</span>
+            <span class="dm" title="工时：工作日 ${WORK_LABEL} 内的进行时长（午休不计）">${ICON.timer}${fmtHours(workHours(t))}</span>
             ${ui.project === 'all' ? projectTag(t.project) : ''}${relTags(t)}
           </div>
           <div class="card-foot">
