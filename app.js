@@ -46,6 +46,7 @@ const ICON = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
   cal: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   grid: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h1M12 9h4M8 15h1M12 15h4"/></svg>',
+  docAdd: '<svg viewBox="0 0 24 24"><path d="M13 3H7v18h7"/><path d="M13 3l6 6v4M13 3v6h6M18 15v6M15 18h6"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
 };
 
@@ -108,7 +109,7 @@ const ui = Object.assign({
   project: 'all', tab: 'board', more: false, doneOpen: false, delOpen: false,
   calMode: 'week', calDate: today(), meetMore: false,
   mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '',
-  dq: '', dKind: 'all', dSrc: 'all',
+  dq: '', dKind: 'all',
 }, load(LS_UI, {}));
 const saveUi = () => store(LS_UI, ui);
 
@@ -187,29 +188,23 @@ function setStatus(t, status) {
   if (status === 'todo') { f.startedAt = 0; f.doneAt = 0; }
   patch(t, f);
 }
-// 点「完成」时顺手登记产出文档（可跳过）；已经挂了文档的直接完成
-function completeTask(t) {
-  const finish = () => { setStatus(t, 'done'); toast('已完成 🎉'); };
-  if (t.docs?.length) return finish();
-  openDialog(`<form class="done-ask">
-    <h3>完成：${esc(firstLine(t.text))}</h3>
-    <label>有产出文档吗？（可跳过）<input class="field" name="doc" placeholder="粘贴链接，或「文档名 | 链接」" autocomplete="off"></label>
-    <p class="hint">只填链接时，文档名记为任务名，之后可以在编辑里改。</p>
-    <div class="acts">
-      <button type="button" class="btn" id="doneSkip">跳过</button>
-      <button class="btn primary">完成</button>
-    </div>
-  </form>`, f => {
-    const raw = (f.get('doc') || '').trim();
-    if (raw) {
-      const doc = docFromLine(raw, 'other', firstLine(t.text));
-      if (!doc) { toast('没有找到链接：请粘贴 http 开头的链接，或点「跳过」'); return false; }
-      t.docs = [doc];
-    }
-    finish();
+function completeTask(t) { setStatus(t, 'done'); toast('已完成 🎉'); }
+// 进行中卡片上的 📄+：只用来添加产出文档；文档名不填时用粘贴带出的标题，再没有就用任务名
+function addOutputDoc(t) {
+  openDialog(`<form>
+    <h3>添加产出文档</h3>
+    <p class="hint">${esc(firstLine(t.text))}</p>
+    <div class="doc-row">${docRow({}).replace(/^<div class="doc-row">|<button type="button" class="ib del"[\s\S]*$/g, '')}</div>
+    <p class="hint">粘贴飞书链接时，如果复制内容里带着标题会自动填上；没有标题时文档名记为任务名，之后可在 ✎ 里改。</p>
+    <div class="acts"><button type="button" class="btn" data-close>取消</button><button class="btn primary">添加</button></div>
+  </form>`, () => {
+    const doc = readDocs($('#dlg form'), firstLine(t.text))[0];
+    if (!doc) { toast('请粘贴 http 开头的链接'); return false; }
+    patch(t, { docs: [...(t.docs || []), { ...doc, at: now() }] });
+    toast('已添加产出文档');
   });
-  $('#doneSkip').onclick = () => { dlg.close(); finish(); };
-  $('#dlg [name=doc]').focus();
+  wireDocs($('#dlg form'));
+  $('#dlg [name=docUrl]').focus();
 }
 function removeTask(t) {
   const log = t.log;
@@ -421,6 +416,7 @@ function viewBoard() {
         <div class="side-icons">
           <button class="icon-btn back" data-act="task-back" data-id="${t.id}" title="回退到未完成">${ICON.undo}</button>
           <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>
+          <button class="icon-btn doc" data-act="task-doc-add" data-id="${t.id}" title="添加产出文档">${ICON.docAdd}</button>
           <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
         </div>
       </div>
@@ -689,15 +685,14 @@ function viewMeetings() {
 }
 
 /* ----- 文档 ----- */
-// 会议上的文档和任务的产出文档汇总在一处，按时间倒序；同一个链接只列一次，来源合并
+// 任务的产出文档汇总在一处，按添加 / 完成时间倒序；同一个链接只列一次，来源合并
 function allDocs() {
   const map = new Map();
   const add = (d, src) => {
     const e = map.get(d.url) || map.set(d.url, { ...d, srcs: [], ts: 0 }).get(d.url);
     e.srcs.push(src); e.ts = Math.max(e.ts, src.ts);
   };
-  db.meetings.filter(m => !m.deletedAt).forEach(m => (m.docs || []).forEach(d => add(d, { kind: 'meet', id: m.id, label: m.title, project: m.project, ts: parseYmd(m.date).getTime() })));
-  db.tasks.filter(t => !t.deletedAt).forEach(t => (t.docs || []).forEach(d => add(d, { kind: 'task', id: t.id, label: firstLine(t.text), done: t.status === 'done', project: t.project, ts: t.doneAt || t.createdAt })));
+  db.tasks.filter(t => !t.deletedAt).forEach(t => (t.docs || []).forEach(d => add(d, { kind: 'task', id: t.id, label: firstLine(t.text), done: t.status === 'done', project: t.project, ts: d.at || t.doneAt || t.startedAt || t.createdAt })));
   return [...map.values()].sort((a, b) => b.ts - a.ts);
 }
 function viewDocs() {
@@ -705,24 +700,22 @@ function viewDocs() {
   const list = allDocs()
     .filter(d => ui.project === 'all' || d.srcs.some(s => s.project === ui.project))
     .filter(d => ui.dKind === 'all' || docKind(d.kind).k === ui.dKind)
-    .filter(d => ui.dSrc === 'all' || d.srcs.some(s => s.kind === ui.dSrc))
     .filter(d => !q || [d.name, ...d.srcs.map(s => s.label)].some(v => (v || '').toLowerCase().includes(q)));
   return `
     <div class="panel filters">
-      <label class="search">${ICON.search}<input id="dq" placeholder="搜索文档名、会议、任务…" value="${esc(ui.dq)}"></label>
+      <label class="search">${ICON.search}<input id="dq" placeholder="搜索文档名、任务…" value="${esc(ui.dq)}"></label>
       <select class="field" id="dKind"><option value="all">全部类型</option>${DOC_KINDS.map(k => `<option value="${k.k}" ${ui.dKind === k.k ? 'selected' : ''}>${k.label}</option>`).join('')}</select>
-      <select class="field" id="dSrc">${[['all', '全部来源'], ['meet', '来自会议'], ['task', '任务产出']].map(([v, l]) => `<option value="${v}" ${ui.dSrc === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      ${ui.dq || ui.dKind !== 'all' || ui.dSrc !== 'all' ? '<button class="btn sm" data-act="doc-clear">清除筛选</button>' : ''}
+      ${ui.dq || ui.dKind !== 'all' ? '<button class="btn sm" data-act="doc-clear">清除筛选</button>' : ''}
     </div>
-    <p class="list-meta">共 <span class="mono">${list.length}</span> 个文档</p>
+    <p class="list-meta">共 <span class="mono">${list.length}</span> 个产出文档</p>
     <div class="doc-list">${list.map(d => `<div class="card doc-item">
       ${docBtn(d)}
       <div class="card-main">
         <a class="doc-name" href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || '文档')}</a>
         <div class="card-meta">${ui.project === 'all' ? projectTag(d.srcs.find(s => s.project)?.project) : ''}${d.srcs.map(s =>
-          `<span class="rel" data-act="${s.kind === 'meet' ? 'meet-open' : 'task-open'}" data-id="${s.id}">${s.kind === 'meet' ? '会议' : '任务'}：${esc(s.label)}${s.done ? ' ✓' : ''}</span>`).join('')}<span class="card-time">${mdSlash(d.ts)}</span></div>
+          `<span class="rel" data-act="task-open" data-id="${s.id}">${esc(s.label)}${s.done ? ' ✓' : ' · 进行中'}</span>`).join('')}<span class="card-time">${mdSlash(d.ts)}</span></div>
       </div>
-    </div>`).join('') || '<div class="panel empty">没有符合条件的文档。任务完成时登记产出文档，或在会议里添加文档后，会出现在这里</div>'}</div>`;
+    </div>`).join('') || '<div class="panel empty">还没有产出文档。进行中的任务点 📄+ 添加后会出现在这里</div>'}</div>`;
 }
 
 // 会议卡片：标题行带类型、项目标签；右侧每个文档一个图标按钮（🎤 纪要 / 📄 PRD / ↗ 其他），竖线后是编辑（删除放在编辑窗口里）
@@ -785,11 +778,11 @@ function openMeetingDetail(m) {
     ${m.summary ? `<div class="d-summary">${esc(m.summary)}</div>` : ''}
     ${sec('讨论要点', text(m.points))}
     ${sec('结论', text(m.conclusion))}
-    <div class="d-sec"><h4><i></i>我的待办</h4>${mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
+    <div class="d-sec"><h4><i></i>我的待办<button class="h4-btn" data-act="meet-todo-new" data-id="${m.id}" title="挂到这场会议下，创建时间记为会议结束时间">${ICON.plus}新建</button></h4>
+      <form class="d-add" id="meetTodoForm" data-id="${m.id}" autocomplete="off" hidden>${ICON.plus}<input name="text" placeholder="短标题：详情，回车保存，Esc 取消"></form>${mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
       <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span>
       <span class="d-todo-main"><span class="d-todo-text">${esc(firstLine(t.text))}</span>${t.note?.trim() ? `<span class="d-todo-note">${esc(t.note.trim())}</span>` : ''}</span>
       ${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}${ICON.arrow}</div>`).join('')}
-      <form class="d-add" id="meetTodoForm" data-id="${m.id}" autocomplete="off">${ICON.plus}<input name="text" placeholder="添加我的待办（短标题：详情），回车保存" title="挂到这场会议下，创建时间记为会议结束时间"></form>
     </div>
     ${sec('他人待办', text(m.othersTodos))}
     ${m.summary || m.points || m.conclusion || mine.length || m.othersTodos ? '' : '<p class="d-empty">还没有填写总结、要点和待办，点 ✎ 补充</p>'}
@@ -1182,14 +1175,14 @@ function readMeeting(f) {
 const docRow = (doc = {}) => `<div class="doc-row">
   <select class="field" name="docKind" data-touched="${doc.kind ? 1 : ''}">${DOC_KINDS.map(d => `<option value="${d.k}" title="${d.label}" ${docKind(doc.kind).k === d.k ? 'selected' : ''}>${d.tag || '其他'}</option>`).join('')}</select>
   <input class="field" name="docName" value="${esc(doc.name)}" placeholder="文档名">
-  <input class="field" name="docUrl" type="url" value="${esc(doc.url)}" placeholder="https://…">
+  <input class="field" name="docUrl" type="url" value="${esc(doc.url)}" placeholder="粘贴飞书链接">
   <button type="button" class="ib del" data-doc-del title="移除">${ICON.x}</button>
 </div>`;
-function readDocs(form) {
+function readDocs(form, fallbackName = '') {
   return $$('.doc-row', form).map(row => {
     const raw = $('[name=docName]', row).value.trim(), tagged = splitDocName(raw);
     const kind = tagged?.kind || $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
-    const name = (tagged ? tagged.name : raw) || docKind(kind).tag || '文档';
+    const name = (tagged ? tagged.name : raw) || fallbackName || docKind(kind).tag || '文档';
     return url ? { kind, name, url } : null;
   }).filter(Boolean);
 }
@@ -1212,6 +1205,24 @@ function wireDocs(form) {
     if (!sel.dataset.touched) sel.value = docKindOf(e.target.value);
   });
   form.addEventListener('change', e => { if (e.target.name === 'docKind') e.target.dataset.touched = '1'; });
+  // 粘贴链接：从飞书复制的内容常带着标题（富文本里的链接文字，或「标题 换行 链接」），文档名还空着就自动填上
+  form.addEventListener('paste', e => {
+    if (e.target.name !== 'docUrl') return;
+    const html = e.clipboardData.getData('text/html'), plain = e.clipboardData.getData('text/plain');
+    const url = findUrl(plain) || findUrl(html);
+    if (!url) return;
+    let title = '';
+    if (html) {
+      const a = [...new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a')].find(x => x.href === url || x.textContent.trim());
+      title = a?.textContent.trim() || '';
+    }
+    if (!title) title = plain.split('\n').map(l => l.trim()).find(l => l && !l.includes(url)) || '';
+    if (title === url || /^https?:\/\//.test(title)) title = '';
+    e.preventDefault();
+    e.target.value = url;
+    const row = e.target.closest('.doc-row'), name = $('[name=docName]', row);
+    if (title && !name.value.trim()) { name.value = title; name.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
 }
 
 function editMeeting(m) {
@@ -1531,7 +1542,9 @@ document.addEventListener('click', e => {
     case 'meet-import': importClick(e.altKey); break;
     case 'meet-edit': editMeeting(findMeet(id)); break;
     case 'meet-del': removeMeeting(findMeet(id)); break;
-    case 'doc-clear': Object.assign(ui, { dq: '', dKind: 'all', dSrc: 'all' }); saveUi(); render(); break;
+    case 'meet-todo-new': { const f = $('#meetTodoForm'); f.hidden = false; $('input', f).focus(); break; }
+    case 'task-doc-add': addOutputDoc(findTask(id)); break;
+    case 'doc-clear': Object.assign(ui, { dq: '', dKind: 'all' }); saveUi(); render(); break;
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
   }
 });
@@ -1559,7 +1572,7 @@ document.addEventListener('pointerup', () => {
 
 document.addEventListener('change', e => {
   const el = e.target;
-  if (['mProject', 'mType', 'mFrom', 'mTo', 'dKind', 'dSrc'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
+  if (['mProject', 'mType', 'mFrom', 'mTo', 'dKind'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
 });
 
 document.addEventListener('input', e => {
@@ -1592,7 +1605,6 @@ document.addEventListener('submit', e => {
     t.manual = true;
     commit();
     openMeetingDetail(m);
-    $('#meetTodoForm input')?.focus();
     return;
   }
   if (f.id === 'meetForm') {
@@ -1624,6 +1636,8 @@ document.addEventListener('submit', e => {
 });
 
 document.addEventListener('keydown', e => {
+  // 会议详情里新建待办时，Esc 只收起输入行，不关整个窗口
+  if (e.key === 'Escape' && e.target.closest?.('#meetTodoForm')) { e.preventDefault(); e.target.value = ''; e.target.form.hidden = true; return; }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || dlg.open;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); if (!dlg.open) openSearch(); return; }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
