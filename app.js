@@ -47,6 +47,7 @@ const ICON = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
   cal: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   grid: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h1M12 9h4M8 15h1M12 15h4"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
 };
 
 /* ========== 数据 ========== */
@@ -597,6 +598,7 @@ function viewMeetings() {
         <input class="composer-input" name="title" id="meetInput" placeholder="粘贴「会议名称 + 会议纪要链接」，回车归档">
         <button type="button" class="btn" data-act="toggle-meet-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
+        ${importBtn()}
       </div>
       <div class="composer-more inline-form" ${ui.meetMore ? '' : 'hidden'}>${meetingFields()}<p class="hint">PRD 等其他文档可以在归档后点 ✎ 编辑添加。</p></div>
     </form>
@@ -671,6 +673,145 @@ function syncMyTodos(m) {
   const existing = new Set(db.tasks.filter(t => t.meeting === m.id).map(t => t.text.trim()));
   const created = lines.filter(l => !existing.has(l)).map(l => addTask(l, { project: m.project, meeting: m.id, silent: true }));
   return created.length;
+}
+
+/* ----- 自动导入会议纪要 ----- */
+// 选定本机的纪要文件夹后，打开页面时自动读取新建 / 修改过的 .md（按【会议名称】【纪要链接】…模板），归档进会议索引
+// 规则同数据仓库的 tools/add_meetings.py：纪要链接必填，已归档过的链接跳过，「我的待办」生成关联待办
+const LS_IMPORT = 'wb.import';  // 已读过的纪要文件：文件名 → 修改时间
+const MD_KEYS = {
+  会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 项目: 'project', PRD: 'prd', 其他文档: 'other',
+  一句话总结: 'summary', 讨论要点: 'points', 结论: 'conclusion', 我的待办: 'myTodos', 他人待办: 'othersTodos',
+};
+
+// 日期接受 2026-10-27、10/27、10月27日；没写时从文件名「YYYYMMDD-HHMM-…」里取
+function normDate(s, fileName) {
+  let m = s.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+  if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  m = s.match(/(\d{1,2})[/月](\d{1,2})/);
+  if (m) return `${new Date().getFullYear()}-${pad(m[1])}-${pad(m[2])}`;
+  m = fileName.match(/^(\d{4})(\d{2})(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : today();
+}
+const normClock = s => { const m = (s || '').match(/(\d{1,2})[:：](\d{2})/); return m ? `${pad(m[1])}:${m[2]}` : ''; };
+
+function parseMinutes(text, fileName) {
+  const raw = {};
+  let cur = null;
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*【(.+?)】(.*)$/);
+    if (m && MD_KEYS[m[1].trim()]) { cur = MD_KEYS[m[1].trim()]; raw[cur] = m[2].trim() ? [m[2]] : []; }
+    else if (cur) raw[cur].push(line);
+  }
+  const val = k => (raw[k] || []).join('\n').trim();
+  const lines = k => val(k).split('\n').map(s => s.trim()).filter(Boolean);
+  const [start, end] = val('time').split(/[-–—~～至]/);
+  const fnClock = fileName.match(/^\d{8}-(\d{2})(\d{2})/);
+  const project = projects().find(p => p.name === val('project'));
+  // 文档每行「文档名 | 链接」，只有链接时名字留空
+  const docs = ['prd', 'other'].flatMap(kind => lines(kind).map(l => {
+    const i = l.lastIndexOf('|'), name = i < 0 ? '' : l.slice(0, i).trim(), url = safeLink(i < 0 ? l : l.slice(i + 1));
+    return url ? { kind, name: name || (kind === 'prd' ? 'PRD' : '文档'), url } : null;
+  })).filter(Boolean);
+  return {
+    title: val('title'), link: safeLink(val('link')),
+    date: normDate(val('date'), fileName),
+    start: normClock(start) || (val('time') ? '' : fnClock ? `${fnClock[1]}:${fnClock[2]}` : ''), end: normClock(end),
+    type: MEETING_TYPES.includes(val('type')) ? val('type') : '其他', project: project?.id || '',
+    summary: val('summary'), points: val('points'), conclusion: val('conclusion'),
+    myTodos: lines('myTodos').map(l => l.replace(/^(?:[-*•]|\d+[.、)）])\s*/, '')).filter(Boolean).join('\n'), othersTodos: val('othersTodos'), docs,
+  };
+}
+
+async function importMinutes(files) {
+  const seen = load(LS_IMPORT, {});
+  const res = { added: [], todos: 0, dup: 0, bad: [] };
+  for (const file of files) {
+    if (!/\.md$/i.test(file.name) || seen[file.name] === file.lastModified) continue;
+    const m = parseMinutes(await file.text(), file.name);
+    seen[file.name] = file.lastModified;  // 缺字段的文件改好后修改时间会变，到时再读
+    if (!m.title || !m.link) { res.bad.push(file.name); continue; }
+    if (findByLink(m.link)) { res.dup++; continue; }
+    const rec = { id: uid(), ...m, createdAt: now(), deletedAt: 0, u: now() };
+    db.meetings.push(rec);
+    res.todos += syncMyTodos(rec);
+    res.added.push(rec.title);
+  }
+  store(LS_IMPORT, seen);
+  if (res.added.length) commit();
+  return res;
+}
+function importReport(r, manual) {
+  const parts = [];
+  if (r.added.length) parts.push(`已导入 ${r.added.length} 场会议${r.todos ? `，生成 ${r.todos} 条关联待办` : ''}`);
+  if (r.dup) parts.push(`${r.dup} 场已归档过，跳过`);
+  if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
+  if (parts.length || manual) toast(parts.join('；') || '没有新建或修改过的纪要');
+}
+
+// 文件夹句柄存在 IndexedDB（localStorage 存不了），下次打开页面还能用
+function idb(mode, fn) {
+  return new Promise((ok, no) => {
+    const r = indexedDB.open('wb', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onerror = () => no(r.error);
+    r.onsuccess = () => {
+      try {
+        const tx = r.result.transaction('kv', mode), q = fn(tx.objectStore('kv'));
+        tx.oncomplete = () => ok(q.result);
+        tx.onerror = () => no(tx.error);
+      } catch (e) { no(e); }
+    };
+  });
+}
+const imp = { dir: null, perm: '', last: 0, asked: false };
+async function dirFiles(dir) {
+  const out = [];
+  for await (const h of dir.values()) if (h.kind === 'file' && /\.md$/i.test(h.name)) out.push(await h.getFile());
+  return out;
+}
+
+// 打开页面 / 切回页面时自动跑；浏览器要求重新授权时，只能等用户点一下
+async function autoImport(manual = false) {
+  if (!window.showDirectoryPicker) return;
+  if (!imp.dir) imp.dir = await idb('readonly', s => s.get('minutesDir')).catch(() => null) || null;
+  if (!imp.dir) return;
+  const perm = await imp.dir.queryPermission({ mode: 'read' });
+  if (perm !== imp.perm) { imp.perm = perm; render(); }
+  if (perm !== 'granted') {
+    if (!imp.asked) { imp.asked = true; toast(`自动导入纪要需要授权读取「${imp.dir.name}」`, () => importClick(), '授权'); }
+    return;
+  }
+  if (!manual && now() - imp.last < 5 * 6e4) return;
+  imp.last = now();
+  importReport(await importMinutes(await dirFiles(imp.dir)), manual);
+}
+const runImport = manual => autoImport(manual).catch(e => toast('导入纪要失败：' + (e.message || e)));
+
+// 按住 Alt / Option 点击可以更换文件夹
+async function importClick(change = false) {
+  if (!window.showDirectoryPicker) return pickMinutesFiles();
+  try {
+    if (imp.dir && !change && await imp.dir.requestPermission({ mode: 'read' }) === 'granted') { imp.perm = 'granted'; render(); return runImport(true); }
+    imp.dir = await showDirectoryPicker({ id: 'minutes', mode: 'read' });
+    await idb('readwrite', s => s.put(imp.dir, 'minutesDir')).catch(() => {});
+    imp.perm = 'granted'; render();
+    toast(`已连接「${imp.dir.name}」，以后打开工作台会自动导入新纪要`);
+    setTimeout(() => runImport(true), 1500);
+  } catch (e) { if (e.name !== 'AbortError') toast('导入纪要失败：' + e.message); }
+}
+// Safari / Firefox 不支持记住文件夹，只能每次手动选
+function pickMinutesFiles() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true; inp.webkitdirectory = true; inp.hidden = true;
+  document.body.appendChild(inp);
+  inp.onchange = () => { inp.remove(); importMinutes([...inp.files]).then(r => importReport(r, true)); };
+  inp.click();
+}
+function importBtn() {
+  if (!imp.dir) return `<button type="button" class="btn" data-act="meet-import" title="选择本机的会议纪要文件夹，之后打开工作台自动导入新纪要">${ICON.folder}<span class="lbl">自动导入</span></button>`;
+  const ok = imp.perm === 'granted';
+  return `<button type="button" class="btn${ok ? '' : ' warn'}" data-act="meet-import" title="${ok ? `已连接「${esc(imp.dir.name)}」，点击立即检查；按住 Alt 点击更换文件夹` : '点击授权后继续自动导入'}">${ICON.folder}<span class="lbl">${ok ? esc(imp.dir.name) : '授权导入'}</span></button>`;
 }
 
 /* ========== 对话框 ========== */
@@ -1027,9 +1168,9 @@ function renderSync() {
 
 /* ========== 交互 ========== */
 let toastTimer;
-function toast(msg, undo) {
+function toast(msg, undo, label = '撤销') {
   const el = $('#toast');
-  el.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button>撤销</button>' : ''}`;
+  el.innerHTML = `<span>${esc(msg)}</span>${undo ? `<button>${esc(label)}</button>` : ''}`;
   el.hidden = false;
   if (undo) $('button', el).onclick = () => { el.hidden = true; undo(); };
   clearTimeout(toastTimer);
@@ -1087,6 +1228,7 @@ document.addEventListener('click', e => {
       ui.calDate = ymd(ui.calMode === 'week' ? addDays(d, 7 * n) : new Date(d.getFullYear(), d.getMonth() + n, 1));
       saveUi(); render(); break;
     }
+    case 'meet-import': importClick(e.altKey); break;
     case 'meet-edit': editMeeting(findMeet(id)); break;
     case 'meet-del': removeMeeting(findMeet(id)); break;
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
@@ -1178,7 +1320,7 @@ document.addEventListener('keydown', e => {
 });
 
 // 回到页面或定时拉取远端更新
-document.addEventListener('visibilitychange', () => { if (!document.hidden && now() - sync.last > 15000) doSync(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && now() - sync.last > 15000) doSync().then(() => runImport()); });
 setInterval(() => { if (!document.hidden && !sync.busy) doSync(); }, 60000);
 // 跨日自动刷新「今天」
 let lastDay = today();
@@ -1201,4 +1343,5 @@ window.addEventListener('unhandledrejection', e => showFatal(String(e.reason?.me
 
 applyTheme(document.documentElement.dataset.theme);
 render();
-doSync();
+// 先拉一次远端数据再导入，避免别的设备已归档过的会议重复导入
+doSync().then(() => runImport());
