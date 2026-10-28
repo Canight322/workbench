@@ -170,7 +170,7 @@ function addTask(text, opts = {}) {
   const t = {
     id: uid(), text, project: opts.project || (ui.project !== 'all' ? ui.project : ''),
     status: 'todo', due: opts.due || '', note: opts.note || '', parent: opts.parent || '', meeting: opts.meeting || '',
-    createdAt: now(), startedAt: 0, doneAt: 0, deletedAt: 0, u: now(),
+    createdAt: opts.createdAt || now(), startedAt: 0, doneAt: 0, deletedAt: 0, u: now(),
   };
   t.log = [{ a: 'create', t: t.createdAt }];
   db.tasks.push(t);
@@ -375,8 +375,8 @@ function viewBoard() {
   const deleted = db.tasks.filter(t => t.deletedAt && !t.purged && inScope(t)).sort((a, b) => b.deletedAt - a.deletedAt);
 
   const cardBody = t => `
-      <div class="card-text" data-act="task-edit" data-id="${t.id}" title="点击编辑">${cardText(t.text)}</div>
-      ${t.note?.trim() ? `<div class="card-note" data-act="task-edit" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
+      <div class="card-text" data-act="task-open" data-id="${t.id}" title="点击查看">${cardText(t.text)}</div>
+      ${t.note?.trim() ? `<div class="card-note" data-act="task-open" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
   // 操作按钮放在卡片右侧，不单独占一行；进行中卡片为「完成」+ 一排小图标
   const card = t => t.status === 'todo' ? `
@@ -384,7 +384,7 @@ function viewBoard() {
       <div class="card-main">${cardBody(t)}</div>
       <div class="card-side">
         <button class="start-btn" data-act="task-start" data-id="${t.id}" title="开始处理">${ICON.play}<span class="lbl">开始处理</span></button>
-        <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+        <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
       </div>
     </div>` : `
     <div class="card todo-card doing-card" id="t-${t.id}">
@@ -394,7 +394,7 @@ function viewBoard() {
         <div class="side-icons">
           <button class="icon-btn back" data-act="task-back" data-id="${t.id}" title="回退到未完成">${ICON.undo}</button>
           <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>
-          <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+          <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
         </div>
       </div>
     </div>`;
@@ -430,7 +430,7 @@ function viewBoard() {
       ${ui.doneOpen ? `<div class="fold-body">${done.length ? `<div class="done-grid">${done.map(t => {
         const d = new Date(t.doneAt);
         return `<div class="card done-card" id="t-${t.id}">
-          <div class="card-title strike" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}">${esc(firstLine(t.text))}</div>
+          <div class="card-title strike" data-act="task-open" data-id="${t.id}" title="${esc(t.text)}">${esc(firstLine(t.text))}</div>
           <div class="done-meta">
             <span class="dm" title="完成时间">${ICON.clock}<b class="mono">${mdSlash(d)} 周${WEEK[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}</b></span>
             <span class="dm" title="工时：工作日 ${WORK_LABEL} 内的进行时长（午休不计）">${ICON.timer}${fmtHours(workHours(t))}</span>
@@ -438,7 +438,7 @@ function viewBoard() {
           </div>
           <div class="card-foot">
             <button class="reopen-btn" data-act="task-reopen" data-id="${t.id}">重新打开</button>
-            <button class="icon-btn" data-act="task-del" data-id="${t.id}" title="删除">${ICON.x}</button>
+            <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
           </div>
         </div>`;
       }).join('')}</div>` : '<div class="empty">还没有完成的任务</div>'}</div>` : ''}
@@ -552,9 +552,9 @@ function weekView(s) {
       : t.status === 'doing' ? `<b class="ing">进行中</b> 已 ${fmtDur(nowTs - t.startedAt)}`
       : `<b class="wait">待开始</b> 已等 ${fmtDur(nowTs - t.createdAt)}`;
     return { t, first, html: `<div class="week-row">
-      <div class="wk-label" style="grid-column:1" data-act="task-edit" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(firstLine(t.text))}</span></div>
+      <div class="wk-label" style="grid-column:1" data-act="task-open" data-id="${t.id}" title="${esc(t.text)}"><span class="dot" style="background:${statusColor(t.status)}"></span><span>${esc(firstLine(t.text))}</span></div>
       ${cells()}
-      <div class="wk-track" data-act="task-edit" data-id="${t.id}">${segHtml}${markHtml}${note(Math.max(first, ws), Math.min(last, we), text)}${nowLine}</div>
+      <div class="wk-track" data-act="task-open" data-id="${t.id}">${segHtml}${markHtml}${note(Math.max(first, ws), Math.min(last, we), text)}${nowLine}</div>
     </div>` };
   }).filter(Boolean).sort((a, b) => a.first - b.first);
 
@@ -579,7 +579,7 @@ function monthView(base) {
   for (let i = 0; i < weeks * 7; i++) {
     const d = addDays(start, i), ds = ymd(d);
     const items = done.filter(t => ymd(t.doneAt) === ds).map(t => ({
-      cls: 'ev-done', text: firstLine(t.text), act: 'task-edit', id: t.id,
+      cls: 'ev-done', text: firstLine(t.text), act: 'task-open', id: t.id,
       tip: `${shortTime(t.doneAt)} 完成 · 共 ${fmtDur(t.doneAt - t.createdAt)}\n${t.text}`,
     }));
     const shown = items.slice(0, 3);
@@ -751,10 +751,18 @@ function renderMd(src) {
 }
 
 // 「我的待办」每行生成一条关联待办；已有同名关联待办（含已删除）的不重复生成
+// 会议结束时间（没有结束时间用开始时间）；还没到或没填时间时取当前时间
+function meetingEndTs(m) {
+  const clock = m.end || m.start;
+  const ts = m.date && clock ? new Date(`${m.date}T${clock}`).getTime() : 0;
+  return ts && ts < now() ? ts : now();
+}
+// 生成的待办以会议结束时间作为创建时间
 function syncMyTodos(m) {
   const lines = (m.myTodos || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
   const existing = new Set(db.tasks.filter(t => t.meeting === m.id).map(t => t.text.trim()));
-  const created = lines.filter(l => !existing.has(l)).map(l => addTask(l, { project: m.project, meeting: m.id, silent: true }));
+  const createdAt = meetingEndTs(m);
+  const created = lines.filter(l => !existing.has(l)).map(l => addTask(l, { project: m.project, meeting: m.id, createdAt, silent: true }));
   return created.length;
 }
 
@@ -960,6 +968,34 @@ function openDialog(html, onSubmit, cls = '') {
   dlg.showModal();
 }
 
+// 任务详情：只读，点窗口外关闭；点 ✎ 才进入编辑（删除在编辑窗口里）
+function openTaskDetail(t) {
+  const [title, ...rest] = t.text.split('\n');
+  const desc = rest.join('\n').trim();
+  const sec = (h, body) => body ? `<div class="d-sec"><h4><i></i>${h}</h4>${body}</div>` : '';
+  const meeting = t.meeting && db.meetings.find(m => m.id === t.meeting && !m.deletedAt);
+  const parent = t.parent && findTask(t.parent);
+  const times = [['创建', t.createdAt], ['开始', t.startedAt], ['完成', t.doneAt]].filter(([, v]) => v)
+    .map(([k, v]) => `<span class="dm">${k} <b class="mono">${fmtTime(v)}</b></span>`).join('');
+  openDialog(`<div class="detail" tabindex="-1" autofocus>
+    <div class="d-head">
+      <div class="d-main"><div class="d-title">${esc(title)}</div>
+        <div class="d-sub"><span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span>${projectTag(t.project)}${dueTag(t)}</div></div>
+      <div class="meet-acts"><button class="ib" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button></div>
+    </div>
+    <div class="d-body">
+    ${sec('描述', desc && `<div class="md">${renderMd(desc)}</div>`)}
+    ${sec('备注', t.note?.trim() && `<div class="md">${renderMd(t.note.trim())}</div>`)}
+    ${sec('关联', [meeting && `<div class="d-todo" data-act="meet-open" data-id="${meeting.id}"><span class="d-todo-text">会议：${esc(meeting.title)}</span>${ICON.arrow}</div>`,
+      parent && `<div class="d-todo" data-act="goto-task" data-id="${parent.id}"><span class="d-todo-text">上一步：${esc(firstLine(parent.text))}</span>${ICON.arrow}</div>`].filter(Boolean).join(''))}
+    ${sec('时间', `<div class="done-meta">${times}${t.status !== 'todo' ? `<span class="dm" title="工时：工作日 ${WORK_LABEL} 内的进行时长（午休不计）">${ICON.timer}${fmtHours(workHours(t))}</span>` : ''}</div>`)}
+    ${sec('变更记录', `<div class="timeline">${logOf(t).map((e, i, l) => `
+      <div class="tl-item tl-${e.a}"><i></i><span class="mono">${fmtTime(e.t)}</span><b>${LOG_TEXT[e.a] || e.a}</b>${i ? `<em>${fmtDur(e.t - l[i - 1].t)}后</em>` : ''}</div>`).join('')}</div>`)}
+    </div>
+  </div>`, null, 'detail-dlg');
+  dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+}
+
 function editTask(t) {
   openDialog(`<form>
     <h3>编辑任务</h3>
@@ -1127,7 +1163,7 @@ function openSearch() {
     saveUi(); render();
     const el = document.getElementById((h.kind === 'task' ? 't-' : 'm-') + h.o.id);
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); }
-    else if (h.kind === 'task') editTask(h.o);
+    else if (h.kind === 'task') openTaskDetail(h.o);
   };
   input.oninput = () => { sel = 0; draw(); };
   input.onkeydown = e => {
@@ -1332,6 +1368,7 @@ document.addEventListener('click', e => {
     case 'toggle-more': ui.more = !ui.more; saveUi(); render(); $('#taskInput').focus(); break;
     case 'toggle-meet-more': ui.meetMore = !ui.meetMore; saveUi(); render(); $('#meetInput').focus(); break;
     case 'fold': ui[el.dataset.key] = !ui[el.dataset.key]; saveUi(); render(); break;
+    case 'task-open': openTaskDetail(findTask(id)); break;
     case 'task-edit': editTask(findTask(id)); break;
     case 'task-next': newNextTask(findTask(id)); break;
     case 'meet-open': openMeetingDetail(findMeet(id)); break;
@@ -1342,14 +1379,13 @@ document.addEventListener('click', e => {
       if (dlg.open) dlg.close();
       if (ui.tab !== 'board') { ui.tab = 'board'; saveUi(); render(); }
       if (t.status === 'done' && !t.deletedAt) { ui.doneOpen = true; saveUi(); render(); }
-      if (!flashTask(id)) editTask(t);
+      if (!flashTask(id)) openTaskDetail(t);
       break;
     }
     case 'task-start': setStatus(findTask(id), 'doing'); break;
     case 'task-back': setStatus(findTask(id), 'todo'); toast('已回退到未完成'); break;
     case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
     case 'task-reopen': setStatus(findTask(id), 'doing'); break;
-    case 'task-del': removeTask(findTask(id)); break;
     case 'task-restore': { const t = findTask(id); patch(t, { deletedAt: 0, log: withLog(t, 'restore') }); break; }
     case 'task-purge':
       if (confirm('彻底删除后无法恢复，确定吗？')) patch(findTask(id), { purged: 1, text: '', note: '' });
