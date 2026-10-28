@@ -499,6 +499,9 @@ a.d-todo { color: inherit; text-decoration: none; }
 .d-todo-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .d-todo-note { font-size: 12px; line-height: 18px; color: var(--muted); white-space: pre-line; }
 .d-doc .tag { flex: none; font-weight: 600; font-size: 11px; }
+.d-attach-kind { flex: none; width: 6.5em; font-size: 13px; color: var(--muted); }
+.d-attach .d-todo-text { color: var(--text); }
+.d-attach:hover .d-todo-text { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
 .dlg form.d-add { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 6px -8px 0; padding: 4px 8px; border-radius: 7px; color: var(--faint); }
 .d-add:focus-within { background: var(--hover); }
 .d-add[hidden] { display: none; }

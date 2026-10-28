@@ -785,6 +785,7 @@ function openMeetingDetail(m) {
       ${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}${ICON.arrow}</div>`).join('')}
     </div>
     ${sec('他人待办', text(m.othersTodos))}
+    ${sec('附件文档', attachList(m.docs))}
     ${m.summary || m.points || m.conclusion || mine.length || m.othersTodos ? '' : '<p class="d-empty">还没有填写总结、要点和待办，点 ✎ 补充</p>'}
     </div>
   </div>`, null, 'detail-dlg');
@@ -1081,6 +1082,10 @@ function openDialog(html, onSubmit, cls = '') {
   dlg.showModal();
 }
 
+// 会议详情的附件文档：中文类型名 + 文档标题，整行点击跳转（会议纪要在右上角 🎤，不列在这里）
+const DOC_CN = { mrd: '需求文档', prd: '产品需求文档', tdd: '技术方案', fe: '前端技术方案', be: '后端技术方案', tc: '测试方案', track: '周会跟踪表', other: '其他文档' };
+const attachList = docs => [...(docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d =>
+  `<a class="d-todo d-attach" href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.url)}"><span class="d-attach-kind">${DOC_CN[docKind(d.kind).k]}</span><span class="d-todo-text">${esc(d.name || '文档')}</span>${ICON.jump}</a>`).join('');
 // 详情窗口里的文档列表：类型 + 文档名，点击打开
 const docList = docs => (docs || []).length ? [...docs].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d => {
   const k = docKind(d.kind);
