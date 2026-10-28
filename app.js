@@ -665,7 +665,7 @@ function meetingFields(m = {}, inDialog = false) {
     <label>一句话总结<input class="field" name="summary" value="${esc(m.summary)}" placeholder="卡片上只显示这一句"></label>
     <label>讨论要点<textarea class="field" name="points">${esc(m.points)}</textarea></label>
     <label>结论<textarea class="field" name="conclusion">${esc(m.conclusion)}</textarea></label>
-    <label><span>我的待办 <span class="hint-inline">每行一条「短标题：详情」，短标题作待办、详情作备注；保存时新行生成待办，改过的行更新原待办；删掉某行不会删除已生成的待办</span></span><textarea class="field" name="myTodos" placeholder="例如：整理首批商家清单：按 GMV 排序，周五前发群里">${esc(m.myTodos)}</textarea></label>
+    <label><span>我的待办 <span class="hint-inline">每行一条「短标题：详情」，短标题作待办、详情作备注；保存时新行生成待办，改过的行更新原待办；删掉某行时，还没开始的待办会一并删除</span></span><textarea class="field" name="myTodos" placeholder="例如：整理首批商家清单：按 GMV 排序，周五前发群里">${esc(m.myTodos)}</textarea></label>
     <label>他人待办<textarea class="field" name="othersTodos" placeholder="例如：@叙璋 周四前确认结算规则">${esc(m.othersTodos)}</textarea></label>`;
 }
 
@@ -861,7 +861,7 @@ function similarity(a, b) {
 // 待办在看板上改过内容 / 备注的，那一项保持你改的，不覆盖。真正新增的行才生成新待办（创建时间为会议结束时间）
 function syncMyTodos(m, prev = '') {
   const lines = todoLines(m.myTodos), before = todoLines(prev);
-  const linked = db.tasks.filter(t => t.meeting === m.id && !t.manual);   // 在会议详情里手动加的待办不参与对应
+  const linked = db.tasks.filter(t => t.meeting === m.id && !t.manual && !t.purged);   // 手动加的、已彻底删除的不参与对应
   const keyOf = t => (t.todo ?? t.text).trim();
   const free = linked.filter(t => !lines.includes(keyOf(t)));   // 对不上任何一行的待办（行被改了或删了）
   let changed = 0;
@@ -887,9 +887,12 @@ function syncMyTodos(m, prev = '') {
     const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt, silent: true });
     t.todo = l;
   });
-  return { n: fresh.length, changed };
+  // 文档里删掉的行：对应待办还没开始的，彻底删除（不进「已删除」）；已开始 / 已完成的保留
+  const gone = free.filter(t => before.includes(keyOf(t)) && !t.deletedAt && t.status === 'todo');
+  gone.forEach(t => Object.assign(t, { deletedAt: now(), purged: 1, text: '', note: '', todo: '', log: withLog(t, 'delete'), u: now() }));
+  return { n: fresh.length, changed, removed: gone.length };
 }
-const todoMsg = r => [r.n && `生成 ${r.n} 条关联待办`, r.changed && `更新 ${r.changed} 条关联待办`].filter(Boolean).join('，');
+const todoMsg = r => [r.n && `生成 ${r.n} 条关联待办`, r.changed && `更新 ${r.changed} 条关联待办`, r.removed && `删除 ${r.removed} 条关联待办`].filter(Boolean).join('，');
 
 /* ----- 自动导入会议纪要 ----- */
 // 选定本机的纪要文件夹后，打开页面时自动读取新建 / 修改过的 .md（按【会议名称】【纪要链接】…模板），归档进会议索引
@@ -946,7 +949,7 @@ function parseMinutes(text, fileName) {
 // 自动检查只读新建 / 修改过的文件；手动点按钮时全部重读（内容没变的不会重复导入）
 async function importMinutes(files, all = false) {
   const seen = load(LS_IMPORT, {});
-  const res = { added: [], updated: [], todos: 0, todoChanged: 0, bad: [], files: [] };
+  const res = { added: [], updated: [], todos: 0, todoChanged: 0, todoRemoved: 0, bad: [], files: [] };
   const note = (name, st, msg = '') => res.files.push({ name, st, msg });
   for (const file of files) {
     if (!/\.md$/i.test(file.name) || (!all && seen[file.name] === file.lastModified)) continue;
@@ -979,7 +982,7 @@ async function importMinutes(files, all = false) {
     const prev = old.myTodos;
     Object.assign(old, next, { src: file.name, u: now() });
     const r = syncMyTodos(old, prev);
-    res.todos += r.n; res.todoChanged += r.changed;
+    res.todos += r.n; res.todoChanged += r.changed; res.todoRemoved += r.removed;
     res.updated.push(old.title);
     note(file.name, 'upd', info(old));
   }
@@ -992,7 +995,7 @@ function importReport(r, manual) {
   const parts = [];
   if (r.added.length) parts.push(`已导入 ${r.added.length} 场会议`);
   if (r.updated.length) parts.push(`已更新 ${r.updated.length} 场：${r.updated.join('、')}`);
-  const tm = todoMsg({ n: r.todos, changed: r.todoChanged });
+  const tm = todoMsg({ n: r.todos, changed: r.todoChanged, removed: r.todoRemoved });
   if (tm) parts.push(tm);
   if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
   if (manual) return importResult(r);
@@ -1007,7 +1010,7 @@ function importResult(r) {
       <td><span class="tag ${IMPORT_ST[f.st][1]}">${IMPORT_ST[f.st][0]}</span></td>
       <td class="t" title="${esc(f.name)}">${esc(f.name)}${f.msg ? `<div class="hint">${esc(f.msg)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="hint">文件夹里没有 .md 文件。纪要需要直接放在这个文件夹里，子文件夹不会读取。</p>'}
-    ${r.todos || r.todoChanged ? `<p class="hint">${todoMsg({ n: r.todos, changed: r.todoChanged })}。</p>` : ''}
+    ${r.todos || r.todoChanged || r.todoRemoved ? `<p class="hint">${todoMsg({ n: r.todos, changed: r.todoChanged, removed: r.todoRemoved })}。</p>` : ''}
     ${r.bad.length ? '<p class="hint">未导入的文件请按模板补上【会议名称】和【纪要链接】，保存后会自动重新导入。</p>' : ''}
     <div class="acts"><button class="btn primary">好的</button></div>
   </form>`, () => {});
