@@ -34,6 +34,7 @@ const ICON = {
   x: '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>',
+  doc: '<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg>',
   arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
@@ -564,6 +565,7 @@ function nowSlot() {
 function meetingFields(m = {}) {
   const [d, s, e] = nowSlot();
   return `
+    <label>飞书文档链接<input class="field" type="url" name="link" value="${esc(m.link)}" placeholder="https://xxx.feishu.cn/docx/…（可不填）"></label>
     <div class="grid3">
       <label>日期<input class="field" type="date" name="date" value="${esc(m.date || d)}" required></label>
       <label>开始<input class="field" type="time" name="start" value="${esc(m.start ?? s)}"></label>
@@ -584,7 +586,7 @@ function viewMeetings() {
     <form class="panel composer" id="meetForm" autocomplete="off">
       <div class="composer-row">
         ${ICON.plus}
-        <input class="composer-input" name="title" id="meetInput" placeholder="输入会议名称，回车保存（展开「更多」填写时间、要点、结论）">
+        <input class="composer-input" name="title" id="meetInput" placeholder="输入会议名称，或粘贴「标题 + 飞书链接」，回车归档">
         <button type="button" class="btn" data-act="toggle-meet-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
@@ -605,14 +607,15 @@ function viewMeetings() {
       return `<div class="panel meet ${open ? 'open' : ''}" id="m-${m.id}">
         <div class="meet-head" data-act="meet-toggle" data-id="${m.id}">
           <div>
-            <div class="meet-title">${esc(m.title)} ${typeTag(m)} ${projectTag(m.project)}</div>
+            <div class="meet-title">${esc(m.title)} ${typeTag(m)} ${projectTag(m.project)}${m.link ? `<a class="doc-link" href="${esc(m.link)}" target="_blank" rel="noopener" title="${esc(m.link)}">${ICON.doc}飞书文档 ↗</a>` : ''}</div>
             <div class="meet-time">${ICON.cal}${md(d)} 周${WEEK[d.getDay()]} ${esc(m.start || '')}${m.end ? '–' + esc(m.end) : ''}</div>
           </div>
           <span class="chev">${ICON.down}</span>
         </div>
         ${open ? `<div class="meet-body">
-          <div class="meet-sec"><h4>讨论要点</h4><p>${esc(m.points) || '<span style="color:var(--faint)">未填写</span>'}</p></div>
-          <div class="meet-sec"><h4>结论</h4><p>${esc(m.conclusion) || '<span style="color:var(--faint)">未填写</span>'}</p></div>
+          ${m.points ? `<div class="meet-sec"><h4>讨论要点</h4><p>${esc(m.points)}</p></div>` : ''}
+          ${m.conclusion ? `<div class="meet-sec"><h4>结论</h4><p>${esc(m.conclusion)}</p></div>` : ''}
+          ${m.points || m.conclusion ? '' : `<p class="meet-empty">${m.link ? '原文在飞书文档中，点上方「飞书文档 ↗」查看' : '还没有填写要点和结论'}</p>`}
           <div class="meet-ops">
             <button class="btn sm" data-act="meet-totask" data-id="${m.id}">结论转待办</button>
             <button class="btn sm" data-act="meet-edit" data-id="${m.id}">编辑</button>
@@ -676,8 +679,13 @@ function editTask(t) {
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
 
+// 只接受 http(s) 链接，避免 javascript: 之类的地址
+const safeLink = v => (/^https?:\/\/\S+$/i.test((v || '').trim()) ? v.trim() : '');
+const findByLink = link => link && db.meetings.find(m => !m.deletedAt && m.link === link);
+
 function readMeeting(f) {
   return {
+    link: safeLink(f.get('link')),
     date: f.get('date') || today(), start: f.get('start') || '', end: f.get('end') || '',
     type: f.get('type') || '其他', project: f.get('project') || '',
     points: (f.get('points') || '').trim(), conclusion: (f.get('conclusion') || '').trim(),
@@ -942,6 +950,7 @@ const findTask = id => db.tasks.find(t => t.id === id);
 const findMeet = id => db.meetings.find(m => m.id === id);
 
 document.addEventListener('click', e => {
+  if (e.target.closest('a[href]')) return;
   const th = e.target.closest('[data-theme-set]');
   if (th) { applyTheme(th.dataset.themeSet); return; }
   const tab = e.target.closest('#tabs button');
@@ -1048,10 +1057,22 @@ document.addEventListener('submit', e => {
   if (f.id === 'meetForm') {
     e.preventDefault();
     const fd = new FormData(f);
-    const title = fd.get('title').trim();
-    if (!title) return;
+    const raw = fd.get('title').trim();
+    if (!raw) return;
+    // 支持直接粘贴「标题 + 飞书链接」：链接单独存，剩下的作标题
+    const pasted = raw.match(/https?:\/\/\S+/i)?.[0] || '';
+    const title = raw.replace(pasted, '').trim() || '飞书文档';
+    const base = ui.meetMore ? readMeeting(fd) : (() => { const [d, s, en] = nowSlot(); return { date: d, start: s, end: en, type: '其他', project: ui.project !== 'all' ? ui.project : '', points: '', conclusion: '', link: '' }; })();
+    base.link = base.link || safeLink(pasted);
+    const dup = findByLink(base.link);
+    if (dup) {
+      ui.meetOpen[dup.id] = true; saveUi(); render();
+      const el = document.getElementById('m-' + dup.id);
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); }
+      toast(`这个链接已经归档过：${dup.title}`);
+      return;
+    }
     if (ui.meetMore) f.reset(); else f.title.value = '';
-    const base = ui.meetMore ? readMeeting(fd) : (() => { const [d, s, en] = nowSlot(); return { date: d, start: s, end: en, type: '其他', project: ui.project !== 'all' ? ui.project : '', points: '', conclusion: '' }; })();
     const m = { id: uid(), title, ...base, createdAt: now(), deletedAt: 0, u: now() };
     db.meetings.push(m);
     ui.meetOpen[m.id] = true;

@@ -348,6 +348,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
 .meet { margin-bottom: 10px; overflow: hidden; }
 .meet-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
 .meet-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; line-height: 22px; }
+.doc-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; line-height: 20px; padding: 0 9px; border-radius: 999px; color: #3370ff; background: color-mix(in srgb, #3370ff 10%, transparent); text-decoration: none; }
+.doc-link:hover { background: color-mix(in srgb, #3370ff 18%, transparent); }
+.doc-link svg { width: 12px; height: 12px; }
+.meet.flash { animation: flash 1.4s; }
 .meet-time { margin-top: 4px; font-family: var(--mono); color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; line-height: 19px; }
 .meet-head .chev { margin-left: auto; width: 28px; height: 28px; border-radius: 7px; background: var(--hover); color: var(--muted); display: grid; place-items: center; flex: none; transition: transform .2s; }
 .meet.open .meet-head .chev { transform: rotate(180deg); }
@@ -355,6 +359,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
 .meet-sec + .meet-sec { margin-top: 10px; }
 .meet-sec h4 { margin: 0 0 3px; font-size: 13px; font-weight: 500; color: var(--muted); line-height: 19px; }
 .meet-sec p { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.meet-empty { margin: 0; color: var(--faint); font-size: 13px; }
 .meet-ops { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
 
 /* dialog */
