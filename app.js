@@ -108,6 +108,7 @@ const ui = Object.assign({
   project: 'all', tab: 'board', more: false, doneOpen: false, delOpen: false,
   calMode: 'week', calDate: today(), meetMore: false,
   mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '',
+  dq: '', dKind: 'all', dSrc: 'all',
 }, load(LS_UI, {}));
 const saveUi = () => store(LS_UI, ui);
 
@@ -186,6 +187,30 @@ function setStatus(t, status) {
   if (status === 'todo') { f.startedAt = 0; f.doneAt = 0; }
   patch(t, f);
 }
+// 点「完成」时顺手登记产出文档（可跳过）；已经挂了文档的直接完成
+function completeTask(t) {
+  const finish = () => { setStatus(t, 'done'); toast('已完成 🎉'); };
+  if (t.docs?.length) return finish();
+  openDialog(`<form class="done-ask">
+    <h3>完成：${esc(firstLine(t.text))}</h3>
+    <label>有产出文档吗？（可跳过）<input class="field" name="doc" placeholder="粘贴链接，或「文档名 | 链接」" autocomplete="off"></label>
+    <p class="hint">只填链接时，文档名记为任务名，之后可以在编辑里改。</p>
+    <div class="acts">
+      <button type="button" class="btn" id="doneSkip">跳过</button>
+      <button class="btn primary">完成</button>
+    </div>
+  </form>`, f => {
+    const raw = (f.get('doc') || '').trim();
+    if (raw) {
+      const doc = docFromLine(raw, 'other', firstLine(t.text));
+      if (!doc) { toast('没有找到链接：请粘贴 http 开头的链接，或点「跳过」'); return false; }
+      t.docs = [doc];
+    }
+    finish();
+  });
+  $('#doneSkip').onclick = () => { dlg.close(); finish(); };
+  $('#dlg [name=doc]').focus();
+}
 function removeTask(t) {
   const log = t.log;
   patch(t, { deletedAt: now(), log: withLog(t, 'delete') });
@@ -207,6 +232,7 @@ function render() {
   if (ui.tab === 'calendar') ui.tab = 'board';  // 完成日历已固定显示在标签栏上方
   setHTML('#calendar', viewCalendar());
   if (ui.tab === 'board') v.innerHTML = viewBoard();
+  else if (ui.tab === 'docs') v.innerHTML = viewDocs();
   else v.innerHTML = viewMeetings();
   for (const [f, n, val] of kept) { const el = $(`#${f} [name="${n}"]`); if (el) el.value = val; }
   if (focus) $(`#${focus[0]} [name="${focus[1]}"]`)?.focus();
@@ -377,7 +403,7 @@ function viewBoard() {
   const cardBody = t => `
       <div class="card-text" data-act="task-open" data-id="${t.id}" title="点击查看">${cardText(t.text)}</div>
       ${t.note?.trim() ? `<div class="card-note" data-act="task-open" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
-      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
+      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
   // 操作按钮放在卡片右侧，不单独占一行；进行中卡片为「完成」+ 一排小图标
   const card = t => t.status === 'todo' ? `
     <div class="card todo-card" id="t-${t.id}">
@@ -435,7 +461,7 @@ function viewBoard() {
           <div class="done-meta">
             <span class="dm" title="完成时间">${ICON.clock}<b class="mono">${mdSlash(d)} 周${WEEK[d.getDay()]} ${pad(d.getHours())}:${pad(d.getMinutes())}</b></span>
             <span class="dm" title="工时：工作日 ${WORK_LABEL} 内的进行时长（午休不计）">${ICON.timer}${fmtHours(workHours(t))}</span>
-            ${ui.project === 'all' ? projectTag(t.project) : ''}${relTags(t)}
+            ${ui.project === 'all' ? projectTag(t.project) : ''}${relTags(t)}${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}
           </div>
           <div class="card-foot">
             <button class="reopen-btn" data-act="task-reopen" data-id="${t.id}">重新打开</button>
@@ -662,6 +688,43 @@ function viewMeetings() {
     <div class="meet-list">${list.map(meetCard).join('') || '<div class="panel empty">没有符合条件的会议记录</div>'}</div>`;
 }
 
+/* ----- 文档 ----- */
+// 会议上的文档和任务的产出文档汇总在一处，按时间倒序；同一个链接只列一次，来源合并
+function allDocs() {
+  const map = new Map();
+  const add = (d, src) => {
+    const e = map.get(d.url) || map.set(d.url, { ...d, srcs: [], ts: 0 }).get(d.url);
+    e.srcs.push(src); e.ts = Math.max(e.ts, src.ts);
+  };
+  db.meetings.filter(m => !m.deletedAt).forEach(m => (m.docs || []).forEach(d => add(d, { kind: 'meet', id: m.id, label: m.title, project: m.project, ts: parseYmd(m.date).getTime() })));
+  db.tasks.filter(t => !t.deletedAt).forEach(t => (t.docs || []).forEach(d => add(d, { kind: 'task', id: t.id, label: firstLine(t.text), done: t.status === 'done', project: t.project, ts: t.doneAt || t.createdAt })));
+  return [...map.values()].sort((a, b) => b.ts - a.ts);
+}
+function viewDocs() {
+  const q = ui.dq.trim().toLowerCase();
+  const list = allDocs()
+    .filter(d => ui.project === 'all' || d.srcs.some(s => s.project === ui.project))
+    .filter(d => ui.dKind === 'all' || docKind(d.kind).k === ui.dKind)
+    .filter(d => ui.dSrc === 'all' || d.srcs.some(s => s.kind === ui.dSrc))
+    .filter(d => !q || [d.name, ...d.srcs.map(s => s.label)].some(v => (v || '').toLowerCase().includes(q)));
+  return `
+    <div class="panel filters">
+      <label class="search">${ICON.search}<input id="dq" placeholder="搜索文档名、会议、任务…" value="${esc(ui.dq)}"></label>
+      <select class="field" id="dKind"><option value="all">全部类型</option>${DOC_KINDS.map(k => `<option value="${k.k}" ${ui.dKind === k.k ? 'selected' : ''}>${k.label}</option>`).join('')}</select>
+      <select class="field" id="dSrc">${[['all', '全部来源'], ['meet', '来自会议'], ['task', '任务产出']].map(([v, l]) => `<option value="${v}" ${ui.dSrc === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      ${ui.dq || ui.dKind !== 'all' || ui.dSrc !== 'all' ? '<button class="btn sm" data-act="doc-clear">清除筛选</button>' : ''}
+    </div>
+    <p class="list-meta">共 <span class="mono">${list.length}</span> 个文档</p>
+    <div class="doc-list">${list.map(d => `<div class="card doc-item">
+      ${docBtn(d)}
+      <div class="card-main">
+        <a class="doc-name" href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || '文档')}</a>
+        <div class="card-meta">${ui.project === 'all' ? projectTag(d.srcs.find(s => s.project)?.project) : ''}${d.srcs.map(s =>
+          `<span class="rel" data-act="${s.kind === 'meet' ? 'meet-open' : 'task-open'}" data-id="${s.id}">${s.kind === 'meet' ? '会议' : '任务'}：${esc(s.label)}${s.done ? ' ✓' : ''}</span>`).join('')}<span class="card-time">${mdSlash(d.ts)}</span></div>
+      </div>
+    </div>`).join('') || '<div class="panel empty">没有符合条件的文档。任务完成时登记产出文档，或在会议里添加文档后，会出现在这里</div>'}</div>`;
+}
+
 // 会议卡片：标题行带类型、项目标签；右侧每个文档一个图标按钮（🎤 纪要 / 📄 PRD / ↗ 其他），竖线后是编辑（删除放在编辑窗口里）
 function meetCard(m) {
   const d = parseYmd(m.date);
@@ -679,14 +742,25 @@ function meetCard(m) {
 const meetDocBtn = (url, icon, title, cls = '') =>
   `<a class="doc-btn${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
 const kindOrder = d => DOC_KINDS.indexOf(docKind(d.kind));
+// 一排文档按钮（会议卡片、任务卡片、文档页共用）；sm 为任务卡片上的小号
+const docBtn = (doc, sm = '') => {
+  const k = docKind(doc.kind);
+  return k.tag && !k.jump ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag' + sm) : meetDocBtn(doc.url, ICON.jump, doc.name || k.tag || '文档', sm);
+};
+const docBtns = (docs, sm = '') => [...(docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d => docBtn(d, sm)).join('');
+// 一行文档：「文档名 | 链接」「[文档名](链接)」或只有链接；label 是所在标签对应的类型
+function docFromLine(l, label = 'other', fallbackName = '') {
+  const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
+  const name = md ? md[1].trim() : i < 0 ? '' : l.slice(0, i).replace(/^[-*•]\s*/, '').trim(), url = md ? md[2] : findUrl(i < 0 ? l : l.slice(i + 1));
+  const tagged = splitDocName(name), clean = (tagged ? tagged.name : name) || fallbackName;
+  const kind = tagged?.kind || (label === 'other' ? docKindOf(clean) : label);
+  return url ? { kind, name: clean || docKind(kind).tag || '文档', url } : null;
+}
 function meetActs(m) {
   return `<div class="meet-acts">
       ${m.link ? meetDocBtn(m.link, ICON.mic, '会议纪要')
         : `<button class="doc-btn missing" data-act="meet-edit" data-id="${m.id}" title="还没有会议纪要链接，点击补充">${ICON.mic}</button>`}
-      ${[...(m.docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(doc => {
-        const k = docKind(doc.kind);
-        return k.tag && !k.jump ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag') : meetDocBtn(doc.url, ICON.jump, doc.name || k.tag || '文档');
-      }).join('')}
+      ${docBtns(m.docs)}
       <span class="acts-sep"></span>
       <button class="ib" data-act="meet-edit" data-id="${m.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
     </div>`;
@@ -711,8 +785,12 @@ function openMeetingDetail(m) {
     ${m.summary ? `<div class="d-summary">${esc(m.summary)}</div>` : ''}
     ${sec('讨论要点', text(m.points))}
     ${sec('结论', text(m.conclusion))}
-    ${sec('我的待办', mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
-      <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span><span class="d-todo-text">${esc(firstLine(t.text))}</span>${ICON.arrow}</div>`).join(''))}
+    <div class="d-sec"><h4><i></i>我的待办</h4>${mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
+      <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span>
+      <span class="d-todo-main"><span class="d-todo-text">${esc(firstLine(t.text))}</span>${t.note?.trim() ? `<span class="d-todo-note">${esc(t.note.trim())}</span>` : ''}</span>
+      ${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}${ICON.arrow}</div>`).join('')}
+      <form class="d-add" id="meetTodoForm" data-id="${m.id}" autocomplete="off">${ICON.plus}<input name="text" placeholder="添加我的待办（短标题：详情），回车保存" title="挂到这场会议下，创建时间记为会议结束时间"></form>
+    </div>
     ${sec('他人待办', text(m.othersTodos))}
     ${m.summary || m.points || m.conclusion || mine.length || m.othersTodos ? '' : '<p class="d-empty">还没有填写总结、要点和待办，点 ✎ 补充</p>'}
     </div>
@@ -778,7 +856,7 @@ function similarity(a, b) {
 // 待办在看板上改过内容 / 备注的，那一项保持你改的，不覆盖。真正新增的行才生成新待办（创建时间为会议结束时间）
 function syncMyTodos(m, prev = '') {
   const lines = todoLines(m.myTodos), before = todoLines(prev);
-  const linked = db.tasks.filter(t => t.meeting === m.id);
+  const linked = db.tasks.filter(t => t.meeting === m.id && !t.manual);   // 在会议详情里手动加的待办不参与对应
   const keyOf = t => (t.todo ?? t.text).trim();
   const free = linked.filter(t => !lines.includes(keyOf(t)));   // 对不上任何一行的待办（行被改了或删了）
   let changed = 0;
@@ -848,12 +926,7 @@ function parseMinutes(text, fileName) {
   const [start, end] = val('time').split(/[-–—~～至]/);
   const fnClock = fileName.match(/^\d{8}-(\d{2})(\d{2})/);
   // 文档每行「文档名 | 链接」或 Markdown 链接「[文档名](链接)」，只有链接时名字留空
-  const docs = DOC_KINDS.flatMap(({ k: label }) => lines(label).map(l => {
-    const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
-    const name = md ? md[1].trim() : i < 0 ? '' : l.slice(0, i).replace(/^[-*•]\s*/, '').trim(), url = md ? md[2] : findUrl(i < 0 ? l : l.slice(i + 1));
-    const tagged = splitDocName(name), kind = tagged?.kind || (label === 'other' ? docKindOf(name) : label);
-    return url ? { kind, name: (tagged ? tagged.name : name) || docKind(kind).tag || '文档', url } : null;
-  })).filter(Boolean);
+  const docs = DOC_KINDS.flatMap(({ k: label }) => lines(label).map(l => docFromLine(l, label))).filter(Boolean);
   return {
     title: val('title').replace(/^#+\s*|\*\*/g, '').trim(), link: findUrl(val('link')),
     date: normDate(val('date'), fileName),
@@ -1015,6 +1088,11 @@ function openDialog(html, onSubmit, cls = '') {
   dlg.showModal();
 }
 
+// 详情窗口里的文档列表：类型 + 文档名，点击打开
+const docList = docs => (docs || []).length ? [...docs].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d => {
+  const k = docKind(d.kind);
+  return `<a class="d-todo d-doc" href="${esc(d.url)}" target="_blank" rel="noopener"><span class="tag">${esc(k.tag || '文档')}</span><span class="d-todo-text">${esc(d.name || k.tag || '文档')}</span>${ICON.jump}</a>`;
+}).join('') : '';
 // 任务详情：只读，点窗口外关闭；点 ✎ 才进入编辑（删除在编辑窗口里）
 function openTaskDetail(t) {
   const [title, ...rest] = t.text.split('\n');
@@ -1031,6 +1109,7 @@ function openTaskDetail(t) {
     <div class="d-body">
     ${sec('描述', desc && `<div class="md">${renderMd(desc)}</div>`)}
     ${sec('备注', t.note?.trim() && `<div class="md">${renderMd(t.note.trim())}</div>`)}
+    ${sec('产出文档', docList(t.docs))}
     ${sec('关联', [meeting && `<div class="d-todo" data-act="meet-open" data-id="${meeting.id}"><span class="d-todo-text">会议：${esc(meeting.title)}</span>${ICON.arrow}</div>`,
       parent && `<div class="d-todo" data-act="goto-task" data-id="${parent.id}"><span class="d-todo-text">上一步：${esc(firstLine(parent.text))}</span>${ICON.arrow}</div>`].filter(Boolean).join(''))}
     ${sec('变更记录', `<div class="timeline">${logOf(t).map((e, i, l) => `
@@ -1050,6 +1129,7 @@ function editTask(t) {
     </div>
     <label>截止时间（可只填日期，也可不填）${dueFields(t.due)}</label>
     <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
+    ${docsEdit(t.docs, '产出文档')}
     <div class="grid3 even">
       <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
       <label>开始时间<input class="field" type="datetime-local" name="startedAt" value="${toLocalInput(t.startedAt)}"></label>
@@ -1077,8 +1157,9 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), ...times });
+    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form')), ...times });
   });
+  wireDocs($('#dlg form'));
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
 
@@ -1113,28 +1194,12 @@ function readDocs(form) {
   }).filter(Boolean);
 }
 
-function editMeeting(m) {
-  openDialog(`<form>
-    <h3>编辑会议</h3>
-    <label>会议名称<input class="field" name="title" value="${esc(m.title)}" required></label>
-    ${meetingFields(m, true)}
-    <div class="docs-edit"><div class="docs-label">其他文档</div>
-      <div class="doc-rows">${(m.docs || []).map(docRow).join('')}</div>
-      <button type="button" class="add-doc" data-doc-add>${ICON.plus}添加文档</button>
-    </div>
-    <div class="acts">
-      <button type="button" class="btn danger left" id="dlgDel">删除</button>
-      <button type="button" class="btn" data-close>取消</button>
-      <button class="btn primary">保存</button>
-    </div>
-  </form>`, f => {
-    const prev = m.myTodos;
-    Object.assign(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')), u: now() });
-    const msg = todoMsg(syncMyTodos(m, prev));
-    commit();
-    if (msg) toast(`已${msg}`);
-  });
-  const form = $('#dlg form');
+// 编辑窗口里的文档区（会议的其他文档、任务的产出文档）
+const docsEdit = (docs, label) => `<div class="docs-edit"><div class="docs-label">${label}</div>
+  <div class="doc-rows">${(docs || []).map(docRow).join('')}</div>
+  <button type="button" class="add-doc" data-doc-add>${ICON.plus}添加文档</button>
+</div>`;
+function wireDocs(form) {
   form.addEventListener('click', e => {
     if (e.target.closest('[data-doc-add]')) { $('.doc-rows', form).insertAdjacentHTML('beforeend', docRow()); $('.doc-row:last-child [name=docName]', form).focus(); }
     const del = e.target.closest('[data-doc-del]');
@@ -1147,6 +1212,27 @@ function editMeeting(m) {
     if (!sel.dataset.touched) sel.value = docKindOf(e.target.value);
   });
   form.addEventListener('change', e => { if (e.target.name === 'docKind') e.target.dataset.touched = '1'; });
+}
+
+function editMeeting(m) {
+  openDialog(`<form>
+    <h3>编辑会议</h3>
+    <label>会议名称<input class="field" name="title" value="${esc(m.title)}" required></label>
+    ${meetingFields(m, true)}
+    ${docsEdit(m.docs, '其他文档')}
+    <div class="acts">
+      <button type="button" class="btn danger left" id="dlgDel">删除</button>
+      <button type="button" class="btn" data-close>取消</button>
+      <button class="btn primary">保存</button>
+    </div>
+  </form>`, f => {
+    const prev = m.myTodos;
+    Object.assign(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')), u: now() });
+    const msg = todoMsg(syncMyTodos(m, prev));
+    commit();
+    if (msg) toast(`已${msg}`);
+  });
+  wireDocs($('#dlg form'));
   $('#dlgDel').onclick = () => { dlg.close(); removeMeeting(m); };
 }
 
@@ -1189,7 +1275,7 @@ function openSearch() {
   let sel = 0, hits = [];
   const draw = () => {
     const q = input.value.trim().toLowerCase();
-    const tasks = db.tasks.filter(t => !t.deletedAt && (!q || (t.text + ' ' + t.note).toLowerCase().includes(q)))
+    const tasks = db.tasks.filter(t => !t.deletedAt && (!q || [t.text, t.note, ...(t.docs || []).map(d => d.name)].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => b.u - a.u).map(t => ({ kind: 'task', o: t, label: firstLine(t.text), tag: STATUS[t.status] }));
     const meets = db.meetings.filter(m => !m.deletedAt && (!q || [m.title, m.points, m.conclusion].join(' ').toLowerCase().includes(q)))
       .sort((a, b) => b.u - a.u).map(m => ({ kind: 'meet', o: m, label: m.title, tag: '会议 ' + mdSlash(parseYmd(m.date)) }));
@@ -1429,7 +1515,7 @@ document.addEventListener('click', e => {
     }
     case 'task-start': setStatus(findTask(id), 'doing'); break;
     case 'task-back': setStatus(findTask(id), 'todo'); toast('已回退到未完成'); break;
-    case 'task-done': setStatus(findTask(id), 'done'); toast('已完成 🎉', null); break;
+    case 'task-done': completeTask(findTask(id)); break;
     case 'task-reopen': setStatus(findTask(id), 'doing'); break;
     case 'task-restore': { const t = findTask(id); patch(t, { deletedAt: 0, log: withLog(t, 'restore') }); break; }
     case 'task-purge':
@@ -1445,6 +1531,7 @@ document.addEventListener('click', e => {
     case 'meet-import': importClick(e.altKey); break;
     case 'meet-edit': editMeeting(findMeet(id)); break;
     case 'meet-del': removeMeeting(findMeet(id)); break;
+    case 'doc-clear': Object.assign(ui, { dq: '', dKind: 'all', dSrc: 'all' }); saveUi(); render(); break;
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
   }
 });
@@ -1472,15 +1559,16 @@ document.addEventListener('pointerup', () => {
 
 document.addEventListener('change', e => {
   const el = e.target;
-  if (['mProject', 'mType', 'mFrom', 'mTo'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
+  if (['mProject', 'mType', 'mFrom', 'mTo', 'dKind', 'dSrc'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
 });
 
 document.addEventListener('input', e => {
-  if (e.target.id === 'mq') {
-    ui.mq = e.target.value; saveUi();
+  if (e.target.id === 'mq' || e.target.id === 'dq') {
+    const id = e.target.id;
+    ui[id] = e.target.value; saveUi();
     const pos = e.target.selectionStart;
     render();
-    const inp = $('#mq'); inp.focus(); inp.setSelectionRange(pos, pos);
+    const inp = $('#' + id); inp.focus(); inp.setSelectionRange(pos, pos);
   }
 });
 
@@ -1493,6 +1581,19 @@ document.addEventListener('submit', e => {
     if (ui.more) f.reset(); else f.text.value = '';
     addTask(fd.get('text'), ui.more ? { project: fd.get('project'), due: readDue(fd), note: fd.get('note') || '' } : {});
     $('#taskInput').focus();
+  }
+  // 会议详情里手动新建「我的待办」：挂到该会议，创建时间为会议结束时间
+  if (f.id === 'meetTodoForm') {
+    e.preventDefault();
+    const m = findMeet(f.dataset.id), raw = f.text.value.trim();
+    if (!m || !raw) return;
+    const { title, detail } = splitTodo(raw);
+    const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
+    t.manual = true;
+    commit();
+    openMeetingDetail(m);
+    $('#meetTodoForm input')?.focus();
+    return;
   }
   if (f.id === 'meetForm') {
     e.preventDefault();
@@ -1528,7 +1629,7 @@ document.addEventListener('keydown', e => {
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault();
-    const inp = $(ui.tab === 'meetings' ? '#meetInput' : '#taskInput');
+    const inp = $(ui.tab === 'meetings' ? '#meetInput' : ui.tab === 'docs' ? '#dq' : '#taskInput');
     inp.scrollIntoView({ block: 'center' }); inp.focus();
   }
 });
