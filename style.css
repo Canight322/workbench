@@ -438,6 +438,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
 .doc-btn { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); background: var(--card); border: 1px solid var(--line-2); }
 .doc-btn svg { width: 15px; height: 15px; }
 .doc-btn:hover { color: var(--green); border-color: var(--green); background: var(--green-bg); }
+.doc-btn.doc-tag { text-decoration: none; width: auto; min-width: 30px; padding: 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
 .doc-btn.missing { border-style: dashed; color: var(--faint); background: none; }
 .ib { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--faint); }
 .ib svg { width: 15px; height: 15px; }
@@ -455,7 +456,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
 @media (max-width: 860px) {
   .meet-card { flex-wrap: wrap; }
   .meet-card .card-main { flex-basis: 100%; }
-  .meet-acts { width: 100%; justify-content: flex-end; }
+  .meet-acts { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
   .doc-row { grid-template-columns: 70px 1fr 30px; }
   .doc-row [name=docUrl] { grid-column: 1 / 3; }
 }

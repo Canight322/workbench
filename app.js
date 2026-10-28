@@ -36,7 +36,6 @@ const ICON = {
   undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg>',
   mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6"/></svg>',
-  prd: '<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 12h6M10 15.5h6M10 19h3"/></svg>',
   jump: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
   arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
@@ -55,6 +54,29 @@ const LS_DATA = 'wb.data', LS_CFG = 'wb.cfg', LS_UI = 'wb.ui';
 const COLORS = ['#e05a4f', '#f0a032', '#8f62e0', '#3fae74', '#4a83e6', '#6f6a60', '#d4609e', '#2fa8b5'];
 // 常用会议类型；纪要里写了新类型就直接用，下拉和筛选里会自动出现
 const MEETING_TYPES = ['周会', '需求讨论', '需求评审', '技术方案评审', '测试方案评审', '产品分享会', '项目对接'];
+// 会议相关文档：按顺序显示在会议卡片右侧；前后端技术方案合在一份时记为 TDD
+const DOC_KINDS = [
+  { k: 'mrd', tag: 'MRD', label: 'MRD / 需求文档' },
+  { k: 'prd', tag: 'PRD', label: 'PRD / 产品需求文档' },
+  { k: 'tdd', tag: 'TDD', label: 'TDD / 技术方案' },
+  { k: 'fe', tag: 'FE', label: 'FE-TDD / 前端技术方案' },
+  { k: 'be', tag: 'BE', label: 'BE-TDD / 后端技术方案' },
+  { k: 'tc', tag: 'TC', label: 'TC / 测试方案' },
+  { k: 'other', tag: '', label: '其他文档' },
+];
+const docKind = k => DOC_KINDS.find(d => d.k === k) || DOC_KINDS[DOC_KINDS.length - 1];
+// 按文档名识别类型；先认前后端合并、前端、后端，再认 TDD（名字里都带「技术方案」），PRD 先于 MRD（「产品需求文档」也含「需求文档」）
+function docKindOf(name) {
+  const n = name || '';
+  if (/前后端|fe\s*[&+/／]\s*be/i.test(n)) return 'tdd';
+  if (/fe[-_ ]?tdd|前端(技术)?方案/i.test(n)) return 'fe';
+  if (/be[-_ ]?tdd|(后端|服务端)(技术)?方案/i.test(n)) return 'be';
+  if (/tdd|技术方案/i.test(n)) return 'tdd';
+  if (/(^|[^a-z])tc([^a-z]|$)|测试方案|测试用例/i.test(n)) return 'tc';
+  if (/prd|产品需求/i.test(n)) return 'prd';
+  if (/mrd|需求文档|市场需求/i.test(n)) return 'mrd';
+  return 'other';
+}
 const STATUS = { todo: '未完成', doing: '进行中', done: '已完成' };
 const COLLECTIONS = ['projects', 'tasks', 'meetings'];
 
@@ -642,13 +664,17 @@ function meetCard(m) {
   </div>`;
 }
 
-const meetDocBtn = (url, icon, title) =>
-  `<a class="doc-btn" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
+const meetDocBtn = (url, icon, title, cls = '') =>
+  `<a class="doc-btn${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
+const kindOrder = d => DOC_KINDS.indexOf(docKind(d.kind));
 function meetActs(m) {
   return `<div class="meet-acts">
       ${m.link ? meetDocBtn(m.link, ICON.mic, '会议纪要')
         : `<button class="doc-btn missing" data-act="meet-edit" data-id="${m.id}" title="还没有会议纪要链接，点击补充">${ICON.mic}</button>`}
-      ${(m.docs || []).map(doc => meetDocBtn(doc.url, doc.kind === 'prd' ? ICON.prd : ICON.jump, doc.name || (doc.kind === 'prd' ? 'PRD' : '文档'))).join('')}
+      ${[...(m.docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(doc => {
+        const k = docKind(doc.kind);
+        return k.tag ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag') : meetDocBtn(doc.url, ICON.jump, doc.name || '文档');
+      }).join('')}
       <span class="acts-sep"></span>
       <button class="ib" data-act="meet-edit" data-id="${m.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
     </div>`;
@@ -726,7 +752,9 @@ function syncMyTodos(m) {
 // 纪要链接必填；文档改过后更新原来那条会议记录；「我的待办」新增的行生成关联待办
 const LS_IMPORT = 'wb.import';  // 已读过的纪要文件：文件名 → 修改时间
 const MD_KEYS = {
-  会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 会议类型: 'type', 项目: 'project', 关联项目: 'project', PRD: 'prd', 其他文档: 'other',
+  会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 会议类型: 'type', 项目: 'project', 关联项目: 'project',
+  MRD: 'mrd', 需求文档: 'mrd', PRD: 'prd', 产品需求文档: 'prd', TDD: 'tdd', 技术方案: 'tdd', 技术方案文档: 'tdd',
+  'FE-TDD': 'fe', 前端技术方案: 'fe', 'BE-TDD': 'be', 后端技术方案: 'be', TC: 'tc', 测试方案: 'tc', 其他文档: 'other', 文档: 'other',
   一句话总结: 'summary', 讨论要点: 'points', 结论: 'conclusion', 我的待办: 'myTodos', 他人待办: 'othersTodos',
 };
 
@@ -748,7 +776,9 @@ function parseMinutes(text, fileName) {
   for (const line of text.split(/\r?\n/)) {
     // 兼容「- **【纪要链接】**：…」「## 【讨论要点】」这类写法
     const m = line.match(/^\s*(?:[-*>#]+\s*)?(?:\*\*|__)?【(.+?)】(?:\*\*|__)?\s*[:：]?\s*(.*)$/);
-    if (m && MD_KEYS[m[1].trim()]) { cur = MD_KEYS[m[1].trim()]; raw[cur] = m[2].trim() ? [m[2]] : []; }
+    // 标签也可能写成「PRD/产品需求文档」，任一部分认得就行
+    const key = m && [m[1], ...m[1].split(/[/／|]/)].map(x => MD_KEYS[x.trim()] || MD_KEYS[x.trim().toUpperCase()]).find(Boolean);
+    if (key) { cur = key; (raw[cur] ||= []).push(...(m[2].trim() ? [m[2]] : [])); }
     else if (cur) raw[cur].push(line);
   }
   const val = k => (raw[k] || []).join('\n').trim();
@@ -756,10 +786,11 @@ function parseMinutes(text, fileName) {
   const [start, end] = val('time').split(/[-–—~～至]/);
   const fnClock = fileName.match(/^\d{8}-(\d{2})(\d{2})/);
   // 文档每行「文档名 | 链接」或 Markdown 链接「[文档名](链接)」，只有链接时名字留空
-  const docs = ['prd', 'other'].flatMap(kind => lines(kind).map(l => {
+  const docs = DOC_KINDS.flatMap(({ k: label }) => lines(label).map(l => {
     const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
     const name = md ? md[1].trim() : i < 0 ? '' : l.slice(0, i).replace(/^[-*•]\s*/, '').trim(), url = md ? md[2] : findUrl(i < 0 ? l : l.slice(i + 1));
-    return url ? { kind, name: name || (kind === 'prd' ? 'PRD' : '文档'), url } : null;
+    const kind = label === 'other' ? docKindOf(name) : label;
+    return url ? { kind, name: name || docKind(kind).tag || '文档', url } : null;
   })).filter(Boolean);
   return {
     title: val('title').replace(/^#+\s*|\*\*/g, '').trim(), link: findUrl(val('link')),
@@ -974,10 +1005,9 @@ function readMeeting(f) {
   };
 }
 
-// 其他文档：每行 类型（PRD / 其他）+ 文档名 + 链接
-const isPrdName = name => /prd|需求文档/i.test(name || '');
+// 其他文档：每行 类型 + 文档名 + 链接
 const docRow = (doc = {}) => `<div class="doc-row">
-  <select class="field" name="docKind" data-touched="${doc.kind ? 1 : ''}"><option value="prd" ${doc.kind === 'prd' ? 'selected' : ''}>PRD</option><option value="other" ${doc.kind === 'prd' ? '' : 'selected'}>其他</option></select>
+  <select class="field" name="docKind" data-touched="${doc.kind ? 1 : ''}">${DOC_KINDS.map(d => `<option value="${d.k}" title="${d.label}" ${docKind(doc.kind).k === d.k ? 'selected' : ''}>${d.tag || '其他'}</option>`).join('')}</select>
   <input class="field" name="docName" value="${esc(doc.name)}" placeholder="文档名">
   <input class="field" name="docUrl" type="url" value="${esc(doc.url)}" placeholder="https://…">
   <button type="button" class="ib del" data-doc-del title="移除">${ICON.x}</button>
@@ -985,7 +1015,7 @@ const docRow = (doc = {}) => `<div class="doc-row">
 function readDocs(form) {
   return $$('.doc-row', form).map(row => {
     const kind = $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
-    const name = $('[name=docName]', row).value.trim() || (kind === 'prd' ? 'PRD' : '文档');
+    const name = $('[name=docName]', row).value.trim() || docKind(kind).tag || '文档';
     return url ? { kind, name, url } : null;
   }).filter(Boolean);
 }
@@ -1016,11 +1046,11 @@ function editMeeting(m) {
     const del = e.target.closest('[data-doc-del]');
     if (del) del.closest('.doc-row').remove();
   });
-  // 文档名里带 PRD / 需求文档 时自动选 PRD（手动改过类型就不再自动切）
+  // 按文档名自动选类型（手动改过类型就不再自动切）
   form.addEventListener('input', e => {
     if (e.target.name !== 'docName') return;
     const sel = $('[name=docKind]', e.target.closest('.doc-row'));
-    if (!sel.dataset.touched) sel.value = isPrdName(e.target.value) ? 'prd' : 'other';
+    if (!sel.dataset.touched) sel.value = docKindOf(e.target.value);
   });
   form.addEventListener('change', e => { if (e.target.name === 'docKind') e.target.dataset.touched = '1'; });
   $('#dlgDel').onclick = () => { dlg.close(); removeMeeting(m); };
