@@ -119,7 +119,7 @@ const inScope = x => ui.project === 'all' || x.project === ui.project;
 const liveTasks = () => db.tasks.filter(t => !t.deletedAt && inScope(t));
 const liveMeetings = () => db.meetings.filter(m => !m.deletedAt && inScope(m));
 const meetingTypes = () => [...new Set([...MEETING_TYPES, ...db.meetings.filter(m => !m.deletedAt && m.type).map(m => m.type)])];
-// 项目名先精确匹配，再看互相包含（如「抖音买单二期项目」）；对不上就留空，不新建项目
+// 项目名先精确匹配，再看互相包含（如项目叫「XX」，写成「XX项目」也能对上）；对不上就留空，不新建项目
 function matchProject(name) {
   const v = (name || '').trim().toLowerCase();
   if (!v) return '';
