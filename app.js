@@ -62,7 +62,7 @@ const DOC_KINDS = [
   { k: 'fe', tag: 'FE', label: 'FE-TDD / 前端技术方案' },
   { k: 'be', tag: 'BE', label: 'BE-TDD / 后端技术方案' },
   { k: 'tc', tag: 'TC', label: 'TC / 测试方案' },
-  { k: 'track', tag: '周会跟踪表', label: '周会跟踪表' },
+  { k: 'track', tag: '周会跟踪表', label: '周会跟踪表', jump: true },  // 卡片上显示跳转按钮
   { k: 'other', tag: '', label: '其他文档' },
 ];
 const docKind = k => DOC_KINDS.find(d => d.k === k) || DOC_KINDS[DOC_KINDS.length - 1];
@@ -684,7 +684,7 @@ function meetActs(m) {
         : `<button class="doc-btn missing" data-act="meet-edit" data-id="${m.id}" title="还没有会议纪要链接，点击补充">${ICON.mic}</button>`}
       ${[...(m.docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(doc => {
         const k = docKind(doc.kind);
-        return k.tag ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag') : meetDocBtn(doc.url, ICON.jump, doc.name || '文档');
+        return k.tag && !k.jump ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag') : meetDocBtn(doc.url, ICON.jump, doc.name || k.tag || '文档');
       }).join('')}
       <span class="acts-sep"></span>
       <button class="ib" data-act="meet-edit" data-id="${m.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
