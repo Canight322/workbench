@@ -437,7 +437,7 @@ function viewBoard() {
     <form class="panel composer" id="taskForm" autocomplete="off">
       <div class="composer-row">
         ${ICON.plus}
-        <input class="composer-input" name="text" id="taskInput" placeholder="输入待办，回车保存">
+        <input class="composer-input" name="text" id="taskInput" placeholder="输入待办（标题：备注），回车保存">
         <button type="button" class="btn" data-act="toggle-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
@@ -1616,7 +1616,10 @@ document.addEventListener('submit', e => {
     const fd = new FormData(f);
     if (!fd.get('text').trim()) return;
     if (ui.more) f.reset(); else f.text.value = '';
-    addTask(fd.get('text'), ui.more ? { project: fd.get('project'), due: readDue(fd), note: fd.get('note') || '' } : {});
+    // 「标题：备注」：冒号前作待办内容，冒号后作备注；「更多」里也填了备注时两段都留
+    const { title, detail } = splitTodo(fd.get('text').trim()), extra = ui.more ? (fd.get('note') || '').trim() : '';
+    const note = [detail, extra].filter(Boolean).join('\n');
+    addTask(title, ui.more ? { project: fd.get('project'), due: readDue(fd), note } : { note });
     $('#taskInput').focus();
   }
   // 会议详情里手动新建「我的待办」：挂到该会议，创建时间为会议结束时间
