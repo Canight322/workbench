@@ -54,7 +54,7 @@ const ICON = {
 const LS_DATA = 'wb.data', LS_CFG = 'wb.cfg', LS_UI = 'wb.ui';
 const COLORS = ['#e05a4f', '#f0a032', '#8f62e0', '#3fae74', '#4a83e6', '#6f6a60', '#d4609e', '#2fa8b5'];
 // 常用会议类型；纪要里写了新类型就直接用，下拉和筛选里会自动出现
-const MEETING_TYPES = ['周会', '需求讨论', '需求评审', '技术方案评审', '测试方案评审', '产品分享会', '项目对接'];
+const MEETING_TYPES = ['业务对接', '需求讨论', '需求评审', '技术方案评审', '测试方案评审', '周会', '产品分享会'];
 // 会议相关文档：按顺序显示在会议卡片右侧；前后端技术方案合在一份时记为 TDD
 const DOC_KINDS = [
   { k: 'mrd', tag: 'MRD', label: 'MRD / 需求文档' },
@@ -118,7 +118,9 @@ const projectOf = id => db.projects.find(p => p.id === id);
 const inScope = x => ui.project === 'all' || x.project === ui.project;
 const liveTasks = () => db.tasks.filter(t => !t.deletedAt && inScope(t));
 const liveMeetings = () => db.meetings.filter(m => !m.deletedAt && inScope(m));
-const meetingTypes = () => [...new Set([...MEETING_TYPES, ...db.meetings.filter(m => !m.deletedAt && m.type).map(m => m.type)])];
+// 按工作流程排：常用类型 → 以后新加的类型 → 「其他」固定最后
+const meetingTypes = () => [...new Set([...MEETING_TYPES, ...db.meetings.filter(m => !m.deletedAt && m.type).map(m => m.type), '其他'])]
+  .sort((a, b) => (a === '其他') - (b === '其他'));
 // 项目名先精确匹配，再看互相包含（如项目叫「XX」，写成「XX项目」也能对上）；对不上就留空，不新建项目
 function matchProject(name) {
   const v = (name || '').trim().toLowerCase();
