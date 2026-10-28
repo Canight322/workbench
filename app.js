@@ -122,12 +122,12 @@ function addTask(text, opts = {}) {
   if (!text) return;
   const t = {
     id: uid(), text, project: opts.project || (ui.project !== 'all' ? ui.project : ''),
-    status: 'todo', due: opts.due || '', note: opts.note || '', parent: opts.parent || '',
+    status: 'todo', due: opts.due || '', note: opts.note || '', parent: opts.parent || '', meeting: opts.meeting || '',
     createdAt: now(), startedAt: 0, doneAt: 0, deletedAt: 0, u: now(),
   };
   t.log = [{ a: 'create', t: t.createdAt }];
   db.tasks.push(t);
-  commit();
+  if (!opts.silent) commit();
   return t;
 }
 function setStatus(t, status) {
@@ -272,7 +272,9 @@ const fmtHours = h => (h > 0 && h < 0.05 ? '<0.1' : String(Math.round(h * 10) / 
 function relTags(t) {
   const parent = t.parent && findTask(t.parent);
   const kids = db.tasks.filter(x => x.parent === t.id && !x.deletedAt);
-  return (parent ? `<span class="rel" data-act="goto-task" data-id="${parent.id}" title="上一步：${esc(parent.text)}">↳ 接：${esc(firstLine(parent.text))}</span>` : '')
+  const meeting = t.meeting && db.meetings.find(m => m.id === t.meeting && !m.deletedAt);
+  return (meeting ? `<span class="rel" data-act="meet-open" data-id="${meeting.id}" title="来自会议：${esc(meeting.title)}">↳ 会议：${esc(meeting.title)}</span>` : '')
+    + (parent ? `<span class="rel" data-act="goto-task" data-id="${parent.id}" title="上一步：${esc(parent.text)}">↳ 接：${esc(firstLine(parent.text))}</span>` : '')
     + (kids.length ? `<span class="rel" data-act="goto-task" data-id="${kids[kids.length - 1].id}" title="后续任务：\n${esc(kids.map(k => firstLine(k.text)).join('\n'))}">→ 后续 ${kids.length}</span>` : '');
 }
 function newNextTask(t) {
@@ -556,7 +558,7 @@ function filteredMeetings() {
     .filter(m => (ui.project === 'all' || m.project === ui.project) && (ui.mProject === 'all' || m.project === ui.mProject))
     .filter(m => ui.mType === 'all' || m.type === ui.mType)
     .filter(m => (!ui.mFrom || m.date >= ui.mFrom) && (!ui.mTo || m.date <= ui.mTo))
-    .filter(m => !q || [m.title, m.points, m.conclusion, ...(m.docs || []).map(d => d.name)].some(s => (s || '').toLowerCase().includes(q)))
+    .filter(m => !q || [m.title, m.summary, m.points, m.conclusion, m.myTodos, m.othersTodos, ...(m.docs || []).map(d => d.name)].some(s => (s || '').toLowerCase().includes(q)))
     .sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start));
 }
 
@@ -579,8 +581,11 @@ function meetingFields(m = {}, inDialog = false) {
       <label>会议类型<select class="field" name="type">${MEETING_TYPES.map(t => `<option ${(m.type || '其他') === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label>关联项目<select class="field" name="project">${projectOptions(m.project ?? (ui.project !== 'all' ? ui.project : ''))}</select></label>
     </div>
-    <label>讨论要点<textarea class="field" name="points" placeholder="讨论了什么">${esc(m.points)}</textarea></label>
-    <label>结论 / 待跟进<textarea class="field" name="conclusion" placeholder="达成的结论、后续动作">${esc(m.conclusion)}</textarea></label>`;
+    <label>一句话总结<input class="field" name="summary" value="${esc(m.summary)}" placeholder="卡片上只显示这一句"></label>
+    <label>讨论要点<textarea class="field" name="points">${esc(m.points)}</textarea></label>
+    <label>结论<textarea class="field" name="conclusion">${esc(m.conclusion)}</textarea></label>
+    <label><span>我的待办 <span class="hint-inline">每行一条，保存时新行自动生成待办并关联；删掉某行不会删除已生成的待办</span></span><textarea class="field" name="myTodos">${esc(m.myTodos)}</textarea></label>
+    <label>他人待办<textarea class="field" name="othersTodos" placeholder="例如：@叙璋 周四前确认结算规则">${esc(m.othersTodos)}</textarea></label>`;
 }
 
 function viewMeetings() {
@@ -612,28 +617,67 @@ function viewMeetings() {
 function meetCard(m) {
   const d = parseYmd(m.date);
   const time = m.start ? ` ${esc(m.start)}${m.end ? '–' + esc(m.end) : ''}` : '';
-  const preview = m.conclusion ? '结论：' + m.conclusion : m.points;
-  const docBtn = (url, icon, title, cls = '') =>
-    `<a class="doc-btn ${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
-  return `<div class="card meet-card" id="m-${m.id}">
+  return `<div class="card meet-card" id="m-${m.id}" data-act="meet-open" data-id="${m.id}">
     <div class="card-main">
-      <div class="meet-head"><span class="meet-name" data-act="meet-edit" data-id="${m.id}" title="点击编辑">${esc(m.title)}</span><span class="tag purple">${esc(m.type || '其他')}</span>${projectTag(m.project)}</div>
+      <div class="meet-head"><span class="meet-name">${esc(m.title)}</span><span class="tag purple">${esc(m.type || '其他')}</span>${projectTag(m.project)}</div>
       <div class="meet-when">${mdSlash(d)} 周${WEEK[d.getDay()]}${time}</div>
-      ${preview ? `<div class="meet-preview" title="${esc(preview)}">${esc(preview)}</div>` : ''}
+      ${m.summary ? `<div class="meet-preview">${esc(m.summary)}</div>` : ''}
     </div>
-    <div class="meet-acts">
-      ${m.link ? docBtn(m.link, ICON.mic, '会议纪要')
+    ${meetActs(m)}
+  </div>`;
+}
+
+const meetDocBtn = (url, icon, title) =>
+  `<a class="doc-btn" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
+function meetActs(m) {
+  return `<div class="meet-acts">
+      ${m.link ? meetDocBtn(m.link, ICON.mic, '会议纪要')
         : `<button class="doc-btn missing" data-act="meet-edit" data-id="${m.id}" title="还没有会议纪要链接，点击补充">${ICON.mic}</button>`}
-      ${(m.docs || []).map(doc => docBtn(doc.url, doc.kind === 'prd' ? ICON.prd : ICON.jump, doc.name || (doc.kind === 'prd' ? 'PRD' : '文档'))).join('')}
+      ${(m.docs || []).map(doc => meetDocBtn(doc.url, doc.kind === 'prd' ? ICON.prd : ICON.jump, doc.name || (doc.kind === 'prd' ? 'PRD' : '文档'))).join('')}
       <span class="acts-sep"></span>
       <button class="ib" data-act="meet-edit" data-id="${m.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
+    </div>`;
+}
+
+// 会议详情：只读，点窗口外关闭；点 ✎ 才进入编辑
+const ST_CLASS = { todo: 'st-todo-s', doing: 'st-doing-s', done: 'st-done-s' };
+function openMeetingDetail(m) {
+  const d = parseYmd(m.date);
+  const time = m.start ? ` ${esc(m.start)}${m.end ? '–' + esc(m.end) : ''}` : '';
+  const mine = db.tasks.filter(t => t.meeting === m.id && !t.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
+  const sec = (title, body) => body ? `<div class="d-sec"><h4>${title}</h4>${body}</div>` : '';
+  const text = v => v ? `<p>${esc(v)}</p>` : '';
+  openDialog(`<div class="detail">
+    <div class="d-head">
+      <div class="d-main"><div class="d-title">${esc(m.title)}</div>
+        <div class="d-sub"><span class="d-when">${mdSlash(d)} 周${WEEK[d.getDay()]}${time}</span><span class="tag purple">${esc(m.type || '其他')}</span>${projectTag(m.project)}</div></div>
+      ${meetActs(m)}
     </div>
-  </div>`;
+    ${m.summary ? `<div class="d-summary">${esc(m.summary)}</div>` : ''}
+    ${sec('讨论要点', text(m.points))}
+    ${sec('结论', text(m.conclusion))}
+    ${sec('我的待办', mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
+      <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span><span class="d-todo-text">${esc(firstLine(t.text))}</span>${ICON.arrow}</div>`).join(''))}
+    ${sec('他人待办', text(m.othersTodos))}
+    ${m.summary || m.points || m.conclusion || mine.length || m.othersTodos ? '' : '<p class="d-empty">还没有填写总结、要点和待办，点 ✎ 补充</p>'}
+  </div>`, null, 'detail-dlg');
+  // 点窗口外（遮罩）关闭
+  dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+}
+
+// 「我的待办」每行生成一条关联待办；已有同名关联待办（含已删除）的不重复生成
+function syncMyTodos(m) {
+  const lines = (m.myTodos || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
+  const existing = new Set(db.tasks.filter(t => t.meeting === m.id).map(t => t.text.trim()));
+  const created = lines.filter(l => !existing.has(l)).map(l => addTask(l, { project: m.project, meeting: m.id, silent: true }));
+  return created.length;
 }
 
 /* ========== 对话框 ========== */
 const dlg = $('#dlg');
 function openDialog(html, onSubmit, cls = '') {
+  if (dlg.open) dlg.close();
+  dlg.onclick = null;
   dlg.className = 'dlg ' + cls;
   dlg.innerHTML = html;
   const form = $('form', dlg);
@@ -693,7 +737,9 @@ function readMeeting(f) {
     link: safeLink(f.get('link')),
     date: f.get('date') || today(), start: f.get('start') || '', end: f.get('end') || '',
     type: f.get('type') || '其他', project: f.get('project') || '',
+    summary: (f.get('summary') || '').trim(),
     points: (f.get('points') || '').trim(), conclusion: (f.get('conclusion') || '').trim(),
+    myTodos: (f.get('myTodos') || '').trim(), othersTodos: (f.get('othersTodos') || '').trim(),
   };
 }
 
@@ -724,11 +770,15 @@ function editMeeting(m) {
     </div>
     <div class="acts">
       <button type="button" class="btn danger left" id="dlgDel">删除</button>
-      ${m.conclusion ? '<button type="button" class="btn" id="dlgToTask">结论转待办</button>' : ''}
       <button type="button" class="btn" data-close>取消</button>
       <button class="btn primary">保存</button>
     </div>
-  </form>`, f => patch(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')) }));
+  </form>`, f => {
+    Object.assign(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')), u: now() });
+    const n = syncMyTodos(m);
+    commit();
+    if (n) toast(`已生成 ${n} 条关联待办`);
+  });
   const form = $('#dlg form');
   form.addEventListener('click', e => {
     if (e.target.closest('[data-doc-add]')) { $('.doc-rows', form).insertAdjacentHTML('beforeend', docRow()); $('.doc-row:last-child [name=docName]', form).focus(); }
@@ -743,16 +793,8 @@ function editMeeting(m) {
   });
   form.addEventListener('change', e => { if (e.target.name === 'docKind') e.target.dataset.touched = '1'; });
   $('#dlgDel').onclick = () => { dlg.close(); removeMeeting(m); };
-  const tt = $('#dlgToTask');
-  if (tt) tt.onclick = () => { dlg.close(); meetingToTasks(m); };
 }
 
-function meetingToTasks(m) {
-  const lines = (m.conclusion || '').split(/\n+/).map(s => s.replace(/^[\s\-*•\d.、)）]+/, '').trim()).filter(Boolean);
-  if (!lines.length) { toast('这场会议还没有填写结论'); return; }
-  lines.forEach(l => addTask(l, { project: m.project, note: `来自会议：${m.title}（${m.date}）` }));
-  toast(`已生成 ${lines.length} 条待办`);
-}
 
 function removeMeeting(m) {
   patch(m, { deletedAt: now() });
@@ -1018,10 +1060,13 @@ document.addEventListener('click', e => {
     case 'fold': ui[el.dataset.key] = !ui[el.dataset.key]; saveUi(); render(); break;
     case 'task-edit': editTask(findTask(id)); break;
     case 'task-next': newNextTask(findTask(id)); break;
+    case 'meet-open': openMeetingDetail(findMeet(id)); break;
     case 'goto-task': {
       e.stopPropagation();
       const t = findTask(id);
       if (!t) break;
+      if (dlg.open) dlg.close();
+      if (ui.tab !== 'board') { ui.tab = 'board'; saveUi(); render(); }
       if (t.status === 'done' && !t.deletedAt) { ui.doneOpen = true; saveUi(); render(); }
       if (!flashTask(id)) editTask(t);
       break;
@@ -1114,7 +1159,9 @@ document.addEventListener('submit', e => {
     if (ui.meetMore) f.reset(); else f.title.value = '';
     const m = { id: uid(), title, ...base, docs: [], createdAt: now(), deletedAt: 0, u: now() };
     db.meetings.push(m);
+    const n = syncMyTodos(m);
     commit();
+    if (n) toast(`已归档，并生成 ${n} 条关联待办`);
     $('#meetInput').focus();
   }
 });
