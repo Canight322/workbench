@@ -392,7 +392,16 @@ const shortTime = ts => { const d = new Date(ts); return `${d.getMonth() + 1}/${
 function viewBoard() {
   const tasks = liveTasks();
   const byCreated = (a, b) => a.createdAt - b.createdAt;
-  const todo = tasks.filter(t => t.status === 'todo').sort(byCreated);
+  // 未完成：有截止时间的在前（已逾期 → 今天 → 由近到远）；没有的按创建时间由新到旧；
+  // 同一场会议生成的（创建时间相同）按「我的待办」里的书写顺序挨在一起
+  const lineIdx = t => {
+    const m = t.meeting && db.meetings.find(x => x.id === t.meeting);
+    const i = m ? todoLines(m.myTodos).indexOf((t.todo ?? t.text).trim()) : -1;
+    return i < 0 ? Infinity : i;
+  };
+  const byTodo = (a, b) => (!!b.due - !!a.due) || (a.due ? dueTs(a) - dueTs(b) : b.createdAt - a.createdAt)
+    || (a.meeting === b.meeting ? lineIdx(a) - lineIdx(b) : 0) || (a.id < b.id ? -1 : 1);
+  const todo = tasks.filter(t => t.status === 'todo').sort(byTodo);
   const doing = tasks.filter(t => t.status === 'doing').sort((a, b) => a.startedAt - b.startedAt);
   const done = tasks.filter(t => t.status === 'done').sort((a, b) => b.doneAt - a.doneAt);
   const deleted = db.tasks.filter(t => t.deletedAt && !t.purged && inScope(t)).sort((a, b) => b.deletedAt - a.deletedAt);
