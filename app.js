@@ -757,14 +757,42 @@ function meetingEndTs(m) {
   const ts = m.date && clock ? new Date(`${m.date}T${clock}`).getTime() : 0;
   return ts && ts < now() ? ts : now();
 }
-// 生成的待办以会议结束时间作为创建时间
-function syncMyTodos(m) {
-  const lines = (m.myTodos || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
-  const existing = new Set(db.tasks.filter(t => t.meeting === m.id).map(t => t.text.trim()));
-  const createdAt = meetingEndTs(m);
-  const created = lines.filter(l => !existing.has(l)).map(l => addTask(l, { project: m.project, meeting: m.id, createdAt, silent: true }));
-  return created.length;
+const todoLines = v => (v || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
+// 两段文字的相近程度（相邻两字的重合比例，0～1）
+function similarity(a, b) {
+  const grams = s => { const g = new Map(); for (let i = 0; i < s.length - 1; i++) { const k = s.slice(i, i + 2); g.set(k, (g.get(k) || 0) + 1); } return g; };
+  const ga = grams(a), gb = grams(b);
+  let hit = 0;
+  for (const [k, n] of ga) hit += Math.min(n, gb.get(k) || 0);
+  return ga.size + gb.size ? (2 * hit) / (a.length - 1 + b.length - 1 || 1) : 0;
 }
+// 「我的待办」每行对应一条关联待办，待办上的 todo 记着它来自哪一行（旧数据没有时按待办内容算）
+// 文档里改了某一行：同一位置被替换、或新旧两行足够相近时，更新原来那条待办（状态和变更记录保留），不再新建；
+// 待办在看板上改过名字的，只更新对应关系，不改名字。真正新增的行才生成新待办（创建时间为会议结束时间）
+function syncMyTodos(m, prev = '') {
+  const lines = todoLines(m.myTodos), before = todoLines(prev);
+  const linked = db.tasks.filter(t => t.meeting === m.id);
+  const keyOf = t => (t.todo ?? t.text).trim();
+  const free = linked.filter(t => !lines.includes(keyOf(t)));   // 对不上任何一行的待办（行被改了或删了）
+  let changed = 0;
+  const fresh = lines.filter(l => !linked.some(t => keyOf(t) === l)).filter(l => {
+    const pos = lines.indexOf(l), samePos = before[pos] && !lines.includes(before[pos]) ? before[pos] : null;
+    // 旧数据：这一行早就在了却没有对应待办，而某条待办的内容也不在旧的行里（看板上改过名字），就是它们俩
+    const orphan = t => before.includes(l) && !before.includes(keyOf(t));
+    const best = free.map(t => ({ t, orphan: orphan(t), score: keyOf(t) === samePos || orphan(t) ? 1 : similarity(keyOf(t), l) }))
+      .sort((a, b) => b.score - a.score)[0];
+    if (!best || best.score < 0.35) return true;
+    const t = best.t;
+    free.splice(free.indexOf(t), 1);
+    Object.assign(t, t.text.trim() === keyOf(t) && !best.orphan ? { text: l } : {}, { todo: l, u: now() });
+    changed++;
+    return false;
+  });
+  const createdAt = meetingEndTs(m);
+  fresh.forEach(l => { const t = addTask(l, { project: m.project, meeting: m.id, createdAt, silent: true }); t.todo = l; });
+  return { n: fresh.length, changed };
+}
+const todoMsg = r => [r.n && `生成 ${r.n} 条关联待办`, r.changed && `更新 ${r.changed} 条关联待办`].filter(Boolean).join('，');
 
 /* ----- 自动导入会议纪要 ----- */
 // 选定本机的纪要文件夹后，打开页面时自动读取新建 / 修改过的 .md（按【会议名称】【纪要链接】…模板），归档进会议索引
@@ -826,7 +854,7 @@ function parseMinutes(text, fileName) {
 // 自动检查只读新建 / 修改过的文件；手动点按钮时全部重读（内容没变的不会重复导入）
 async function importMinutes(files, all = false) {
   const seen = load(LS_IMPORT, {});
-  const res = { added: [], updated: [], todos: 0, bad: [], files: [] };
+  const res = { added: [], updated: [], todos: 0, todoChanged: 0, bad: [], files: [] };
   const note = (name, st, msg = '') => res.files.push({ name, st, msg });
   for (const file of files) {
     if (!/\.md$/i.test(file.name) || (!all && seen[file.name] === file.lastModified)) continue;
@@ -848,7 +876,7 @@ async function importMinutes(files, all = false) {
     if (!old) {
       const rec = { id: uid(), ...m, src: file.name, createdAt: now(), deletedAt: 0, u: now() };
       db.meetings.push(rec);
-      res.todos += syncMyTodos(rec);
+      res.todos += syncMyTodos(rec).n;
       res.added.push(rec.title);
       note(file.name, 'add', info(rec));
       continue;
@@ -856,8 +884,10 @@ async function importMinutes(files, all = false) {
     // 网页上补的文档也保留
     const next = { ...m, docs: mergeDocs(m.docs, old.docs) };
     if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); continue; }
+    const prev = old.myTodos;
     Object.assign(old, next, { src: file.name, u: now() });
-    res.todos += syncMyTodos(old);
+    const r = syncMyTodos(old, prev);
+    res.todos += r.n; res.todoChanged += r.changed;
     res.updated.push(old.title);
     note(file.name, 'upd', info(old));
   }
@@ -870,7 +900,8 @@ function importReport(r, manual) {
   const parts = [];
   if (r.added.length) parts.push(`已导入 ${r.added.length} 场会议`);
   if (r.updated.length) parts.push(`已更新 ${r.updated.length} 场：${r.updated.join('、')}`);
-  if (r.todos) parts.push(`生成 ${r.todos} 条关联待办`);
+  const tm = todoMsg({ n: r.todos, changed: r.todoChanged });
+  if (tm) parts.push(tm);
   if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
   if (manual) return importResult(r);
   if (parts.length) toast(parts.join('；'));
@@ -884,7 +915,7 @@ function importResult(r) {
       <td><span class="tag ${IMPORT_ST[f.st][1]}">${IMPORT_ST[f.st][0]}</span></td>
       <td class="t" title="${esc(f.name)}">${esc(f.name)}${f.msg ? `<div class="hint">${esc(f.msg)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="hint">文件夹里没有 .md 文件。纪要需要直接放在这个文件夹里，子文件夹不会读取。</p>'}
-    ${r.todos ? `<p class="hint">生成了 ${r.todos} 条关联待办。</p>` : ''}
+    ${r.todos || r.todoChanged ? `<p class="hint">${todoMsg({ n: r.todos, changed: r.todoChanged })}。</p>` : ''}
     ${r.bad.length ? '<p class="hint">未导入的文件请按模板补上【会议名称】和【纪要链接】，保存后会自动重新导入。</p>' : ''}
     <div class="acts"><button class="btn primary">好的</button></div>
   </form>`, () => {});
@@ -905,7 +936,7 @@ function idb(mode, fn) {
     };
   });
 }
-const imp = { dir: null, perm: '', last: 0, asked: false };
+const imp = { dir: null, perm: '', last: 0, asked: false, busy: false };
 async function dirFiles(dir) {
   const out = [];
   for await (const h of dir.values()) if (h.kind === 'file' && /\.md$/i.test(h.name)) out.push(await h.getFile());
@@ -923,9 +954,11 @@ async function autoImport(manual = false) {
     if (!imp.asked) { imp.asked = true; toast(`自动导入纪要需要授权读取「${imp.dir.name}」`, () => importClick(), '授权'); }
     return;
   }
-  if (!manual && now() - imp.last < 5 * 6e4) return;
-  imp.last = now();
-  importReport(await importMinutes(await dirFiles(imp.dir), manual), manual);
+  // 只比对文件修改时间，开销很小；同时触发的几次检查（如切回窗口时 focus 和 visibilitychange）只跑一次
+  if (imp.busy || (!manual && now() - imp.last < 20000)) return;
+  imp.busy = true; imp.last = now();
+  try { importReport(await importMinutes(await dirFiles(imp.dir), manual), manual); }
+  finally { imp.busy = false; }
 }
 const runImport = manual => autoImport(manual).catch(e => toast('导入纪要失败：' + (e.message || e)));
 
@@ -1081,10 +1114,11 @@ function editMeeting(m) {
       <button class="btn primary">保存</button>
     </div>
   </form>`, f => {
+    const prev = m.myTodos;
     Object.assign(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')), u: now() });
-    const n = syncMyTodos(m);
+    const msg = todoMsg(syncMyTodos(m, prev));
     commit();
-    if (n) toast(`已生成 ${n} 条关联待办`);
+    if (msg) toast(`已${msg}`);
   });
   const form = $('#dlg form');
   form.addEventListener('click', e => {
@@ -1467,7 +1501,7 @@ document.addEventListener('submit', e => {
     if (ui.meetMore) f.reset(); else f.title.value = '';
     const m = { id: uid(), title, ...base, docs: [], createdAt: now(), deletedAt: 0, u: now() };
     db.meetings.push(m);
-    const n = syncMyTodos(m);
+    const { n } = syncMyTodos(m);
     commit();
     if (n) toast(`已归档，并生成 ${n} 条关联待办`);
     $('#meetInput').focus();
@@ -1486,8 +1520,11 @@ document.addEventListener('keydown', e => {
 });
 
 // 回到页面或定时拉取远端更新
-document.addEventListener('visibilitychange', () => { if (!document.hidden && now() - sync.last > 15000) doSync().then(() => runImport()); });
-setInterval(() => { if (!document.hidden && !sync.busy) doSync(); }, 60000);
+// 回到页面、点回窗口（和编辑器并排开着时不会触发 visibilitychange）、页面开着时每分钟：拉取远端更新，再检查纪要文件夹
+const refresh = () => (now() - sync.last > 15000 ? doSync() : Promise.resolve()).then(() => runImport());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+window.addEventListener('focus', refresh);
+setInterval(() => { if (!document.hidden && !sync.busy) doSync().then(() => runImport()); }, 60000);
 // 跨日自动刷新「今天」
 let lastDay = today();
 setInterval(() => { if (today() !== lastDay) { lastDay = today(); render(); } }, 60000);
