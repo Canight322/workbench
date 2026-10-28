@@ -677,7 +677,7 @@ function syncMyTodos(m) {
 
 /* ----- 自动导入会议纪要 ----- */
 // 选定本机的纪要文件夹后，打开页面时自动读取新建 / 修改过的 .md（按【会议名称】【纪要链接】…模板），归档进会议索引
-// 规则同数据仓库的 tools/add_meetings.py：纪要链接必填，已归档过的链接跳过，「我的待办」生成关联待办
+// 纪要链接必填；文档改过后更新原来那条会议记录；「我的待办」新增的行生成关联待办
 const LS_IMPORT = 'wb.import';  // 已读过的纪要文件：文件名 → 修改时间
 const MD_KEYS = {
   会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 项目: 'project', PRD: 'prd', 其他文档: 'other',
@@ -725,26 +725,38 @@ function parseMinutes(text, fileName) {
 
 async function importMinutes(files) {
   const seen = load(LS_IMPORT, {});
-  const res = { added: [], todos: 0, dup: 0, bad: [] };
+  const res = { added: [], updated: [], todos: 0, bad: [] };
   for (const file of files) {
     if (!/\.md$/i.test(file.name) || seen[file.name] === file.lastModified) continue;
     const m = parseMinutes(await file.text(), file.name);
     seen[file.name] = file.lastModified;  // 缺字段的文件改好后修改时间会变，到时再读
     if (!m.title || !m.link) { res.bad.push(file.name); continue; }
-    if (findByLink(m.link)) { res.dup++; continue; }
-    const rec = { id: uid(), ...m, createdAt: now(), deletedAt: 0, u: now() };
-    db.meetings.push(rec);
-    res.todos += syncMyTodos(rec);
-    res.added.push(rec.title);
+    // 同一份纪要：先按纪要链接找，链接改过时按来源文件找；找到就用文档内容更新原记录
+    const old = findByLink(m.link) || db.meetings.find(x => !x.deletedAt && x.src === file.name);
+    if (!old) {
+      const rec = { id: uid(), ...m, src: file.name, createdAt: now(), deletedAt: 0, u: now() };
+      db.meetings.push(rec);
+      res.todos += syncMyTodos(rec);
+      res.added.push(rec.title);
+      continue;
+    }
+    // 文档里没写项目时保留网页上设的项目；网页上补的文档也保留
+    const next = { ...m, project: m.project || old.project, docs: mergeDocs(m.docs, old.docs) };
+    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) continue;
+    Object.assign(old, next, { src: file.name, u: now() });
+    res.todos += syncMyTodos(old);
+    res.updated.push(old.title);
   }
   store(LS_IMPORT, seen);
-  if (res.added.length) commit();
+  if (res.added.length || res.updated.length) commit();
   return res;
 }
+const mergeDocs = (a, b) => [...a, ...(b || []).filter(d => !a.some(x => x.url === d.url))];
 function importReport(r, manual) {
   const parts = [];
-  if (r.added.length) parts.push(`已导入 ${r.added.length} 场会议${r.todos ? `，生成 ${r.todos} 条关联待办` : ''}`);
-  if (r.dup) parts.push(`${r.dup} 场已归档过，跳过`);
+  if (r.added.length) parts.push(`已导入 ${r.added.length} 场会议`);
+  if (r.updated.length) parts.push(`已更新 ${r.updated.length} 场：${r.updated.join('、')}`);
+  if (r.todos) parts.push(`生成 ${r.todos} 条关联待办`);
   if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
   if (parts.length || manual) toast(parts.join('；') || '没有新建或修改过的纪要');
 }
