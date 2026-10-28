@@ -62,11 +62,21 @@ const DOC_KINDS = [
   { k: 'fe', tag: 'FE', label: 'FE-TDD / 前端技术方案' },
   { k: 'be', tag: 'BE', label: 'BE-TDD / 后端技术方案' },
   { k: 'tc', tag: 'TC', label: 'TC / 测试方案' },
+  { k: 'track', tag: '周会跟踪表', label: '周会跟踪表' },
   { k: 'other', tag: '', label: '其他文档' },
 ];
 const docKind = k => DOC_KINDS.find(d => d.k === k) || DOC_KINDS[DOC_KINDS.length - 1];
 // 按文档名识别类型；先认前后端合并、前端、后端，再认 TDD（名字里都带「技术方案」），PRD 先于 MRD（「产品需求文档」也含「需求文档」）
+// 文档名开头写了「类型 | 」（如「BE-TDD | 技术方案评审_…」）时按它定类型，并把前缀去掉
+const DOC_PREFIX = { MRD: 'mrd', PRD: 'prd', TDD: 'tdd', 'FE-TDD': 'fe', FE: 'fe', 'BE-TDD': 'be', BE: 'be', TC: 'tc', 周会跟踪表: 'track', 跟踪表: 'track', 其他: 'other', 其他文档: 'other' };
+function splitDocName(name) {
+  const m = (name || '').match(/^\s*([^|｜]+?)\s*[|｜]\s*(.*)$/);
+  const k = m && DOC_PREFIX[m[1].toUpperCase()] || m && DOC_PREFIX[m[1]];
+  return k ? { kind: k, name: m[2].trim() } : null;
+}
 function docKindOf(name) {
+  const tagged = splitDocName(name);
+  if (tagged) return tagged.kind;
   const n = name || '';
   if (/前后端|fe\s*[&+/／]\s*be/i.test(n)) return 'tdd';
   if (/fe[-_ ]?tdd|前端(技术)?方案/i.test(n)) return 'fe';
@@ -74,6 +84,7 @@ function docKindOf(name) {
   if (/tdd|技术方案/i.test(n)) return 'tdd';
   if (/(^|[^a-z])tc([^a-z]|$)|测试方案|测试用例/i.test(n)) return 'tc';
   if (/prd|产品需求/i.test(n)) return 'prd';
+  if (/tracking|跟踪表/i.test(n)) return 'track';
   if (/mrd|需求文档|市场需求/i.test(n)) return 'mrd';
   return 'other';
 }
@@ -754,7 +765,8 @@ const LS_IMPORT = 'wb.import';  // 已读过的纪要文件：文件名 → 修�
 const MD_KEYS = {
   会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 会议类型: 'type', 项目: 'project', 关联项目: 'project',
   MRD: 'mrd', 需求文档: 'mrd', PRD: 'prd', 产品需求文档: 'prd', TDD: 'tdd', 技术方案: 'tdd', 技术方案文档: 'tdd',
-  'FE-TDD': 'fe', 前端技术方案: 'fe', 'BE-TDD': 'be', 后端技术方案: 'be', TC: 'tc', 测试方案: 'tc', 其他文档: 'other', 文档: 'other',
+  'FE-TDD': 'fe', 前端技术方案: 'fe', 'BE-TDD': 'be', 后端技术方案: 'be', TC: 'tc', 测试方案: 'tc',
+  周会跟踪表: 'track', 跟踪表: 'track', TRACKING: 'track', 其他文档: 'other', 文档: 'other',
   一句话总结: 'summary', 讨论要点: 'points', 结论: 'conclusion', 我的待办: 'myTodos', 他人待办: 'othersTodos',
 };
 
@@ -789,8 +801,8 @@ function parseMinutes(text, fileName) {
   const docs = DOC_KINDS.flatMap(({ k: label }) => lines(label).map(l => {
     const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
     const name = md ? md[1].trim() : i < 0 ? '' : l.slice(0, i).replace(/^[-*•]\s*/, '').trim(), url = md ? md[2] : findUrl(i < 0 ? l : l.slice(i + 1));
-    const kind = label === 'other' ? docKindOf(name) : label;
-    return url ? { kind, name: name || docKind(kind).tag || '文档', url } : null;
+    const tagged = splitDocName(name), kind = tagged?.kind || (label === 'other' ? docKindOf(name) : label);
+    return url ? { kind, name: (tagged ? tagged.name : name) || docKind(kind).tag || '文档', url } : null;
   })).filter(Boolean);
   return {
     title: val('title').replace(/^#+\s*|\*\*/g, '').trim(), link: findUrl(val('link')),
@@ -1014,8 +1026,9 @@ const docRow = (doc = {}) => `<div class="doc-row">
 </div>`;
 function readDocs(form) {
   return $$('.doc-row', form).map(row => {
-    const kind = $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
-    const name = $('[name=docName]', row).value.trim() || docKind(kind).tag || '文档';
+    const raw = $('[name=docName]', row).value.trim(), tagged = splitDocName(raw);
+    const kind = tagged?.kind || $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
+    const name = (tagged ? tagged.name : raw) || docKind(kind).tag || '文档';
     return url ? { kind, name, url } : null;
   }).filter(Boolean);
 }
