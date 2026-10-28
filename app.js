@@ -195,7 +195,7 @@ function addOutputDoc(t) {
     <h3>添加产出文档</h3>
     <p class="hint">${esc(firstLine(t.text))}</p>
     <div class="doc-row">${docRow({}).replace(/^<div class="doc-row">|<button type="button" class="ib del"[\s\S]*$/g, '')}</div>
-    <p class="hint">粘贴飞书链接时，如果复制内容里带着标题会自动填上；没有标题时文档名记为任务名，之后可在 ✎ 里改。</p>
+    <p class="hint">文档名不填时用任务名，之后可在 ✎ 里改。</p>
     <div class="acts"><button type="button" class="btn" data-close>取消</button><button class="btn primary">添加</button></div>
   </form>`, () => {
     const doc = readDocs($('#dlg form'), firstLine(t.text))[0];
@@ -711,7 +711,7 @@ function viewDocs() {
     <div class="doc-list">${list.map(d => `<div class="card doc-item">
       ${docBtn(d)}
       <div class="card-main">
-        <a class="doc-name" href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || '文档')}</a>
+        <div class="doc-name">${esc(d.name || '文档')}</div>
         <div class="card-meta">${ui.project === 'all' ? projectTag(d.srcs.find(s => s.project)?.project) : ''}${d.srcs.map(s =>
           `<span class="rel" data-act="task-open" data-id="${s.id}">${esc(s.label)}${s.done ? ' ✓' : ' · 进行中'}</span>`).join('')}<span class="card-time">${mdSlash(d.ts)}</span></div>
       </div>
@@ -1155,7 +1155,7 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form')), ...times });
+    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), firstLine(f.get('text').trim() || t.text)), ...times });
   });
   wireDocs($('#dlg form'));
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
