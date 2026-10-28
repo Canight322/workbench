@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>个人工作台</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e6eee5'/><path d='M9 16.5l4.5 4.5L23 11.5' stroke='%235f8f72' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
-<link rel="stylesheet" href="style.css?v=20261022-7">
+<script>
+  // 先套用主题再绘制页面，避免刷新时闪一下
+  try { document.documentElement.dataset.theme = localStorage.getItem('wb.theme') === 'white' ? 'white' : 'eye'; } catch (e) { document.documentElement.dataset.theme = 'eye'; }
+</script>
+<link rel="stylesheet" href="style.css?v=20261028-1">
 </head>
 <body>
 <div class="app">
@@ -31,6 +35,10 @@
       </div>
       <div class="stats" id="stats"></div>
       <div class="topbar-right">
+        <div class="theme-switch" role="group" aria-label="配色">
+          <button data-theme-set="white" title="白色"><i class="sw-white"></i>白色</button>
+          <button data-theme-set="eye" title="护眼色"><i class="sw-eye"></i>护眼</button>
+        </div>
         <button class="sync-btn" id="syncBtn" data-act="settings"></button>
       </div>
     </header>
@@ -51,6 +59,6 @@
 <dialog id="dlg" class="dlg"></dialog>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=20261022-7"></script>
+<script src="app.js?v=20261028-1"></script>
 </body>
 </html>

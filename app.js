@@ -177,6 +177,14 @@ function renderNav() {
     <button class="nav-add" data-act="project-add">${ICON.plus}新建项目</button>`);
 }
 
+// 配色：白色 / 护眼色，记在本机浏览器
+function applyTheme(theme) {
+  theme = theme === 'white' ? 'white' : 'eye';
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem('wb.theme', theme); } catch { /* 隐私模式 */ }
+  $$('[data-theme-set]').forEach(b => b.classList.toggle('on', b.dataset.themeSet === theme));
+}
+
 function renderHeader() {
   const d = new Date();
   const tl = $('#todayLabel');
@@ -934,6 +942,8 @@ const findTask = id => db.tasks.find(t => t.id === id);
 const findMeet = id => db.meetings.find(m => m.id === id);
 
 document.addEventListener('click', e => {
+  const th = e.target.closest('[data-theme-set]');
+  if (th) { applyTheme(th.dataset.themeSet); return; }
   const tab = e.target.closest('#tabs button');
   if (tab) { ui.tab = tab.dataset.tab; saveUi(); render(); return; }
   const el = e.target.closest('[data-act]');
@@ -1083,5 +1093,6 @@ function showFatal(msg) {
 window.addEventListener('error', e => showFatal(e.message || '未知错误'));
 window.addEventListener('unhandledrejection', e => showFatal(String(e.reason?.message || e.reason)));
 
+applyTheme(document.documentElement.dataset.theme);
 render();
 doSync();
