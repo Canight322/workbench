@@ -383,7 +383,8 @@ function viewBoard() {
     <div class="card todo-card" id="t-${t.id}">
       <div class="card-main">${cardBody(t)}</div>
       <div class="card-side">
-        <button class="start-btn" data-act="task-start" data-id="${t.id}" title="开始处理">${ICON.play}<span class="lbl">开始处理</span></button>
+        <button class="start-btn" data-act="task-start" data-id="${t.id}" title="开始：移到「进行中」，开始计工时">${ICON.play}<span class="lbl">开始</span></button>
+        <button class="start-btn alt" data-act="task-done" data-id="${t.id}" title="完成：跳过「进行中」直接完成，适合马上就能做完的事">${ICON.check}<span class="lbl">完成</span></button>
         <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
       </div>
     </div>` : `
@@ -421,7 +422,7 @@ function viewBoard() {
       </div>
       <div class="panel col doing">
         <div class="col-head"><span class="dot" style="background:var(--green)"></span>进行中<span class="n">${doing.length}</span></div>
-        <div class="col-body">${doing.map(card).join('') || '<div class="empty">勾选「开始处理」后任务会出现在这里</div>'}</div>
+        <div class="col-body">${doing.map(card).join('') || '<div class="empty">点「开始」后任务会出现在这里</div>'}</div>
       </div>
     </div>
 
