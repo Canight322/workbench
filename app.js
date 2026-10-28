@@ -1221,6 +1221,11 @@ function wireDocs(form) {
       const a = [...new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a')].find(x => x.href === url || x.textContent.trim());
       title = a?.textContent.trim() || '';
     }
+    // 「标题 | 链接」（书签小工具复制的格式）或 Markdown「[标题](链接)」写在同一行
+    const same = plain.split('\n').map(l => l.trim()).find(l => l.includes(url)) || '';
+    const md = same.match(/^\[([^\]]+)\]\(/), bar = same.lastIndexOf('|');
+    if (!title && md) title = md[1].trim();
+    if (!title && bar > 0) title = same.slice(0, bar).trim();
     if (!title) title = plain.split('\n').map(l => l.trim()).find(l => l && !l.includes(url)) || '';
     if (title === url || /^https?:\/\//.test(title)) title = '';
     e.preventDefault();
