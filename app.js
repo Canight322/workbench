@@ -35,6 +35,10 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>',
   doc: '<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg>',
+  mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6"/></svg>',
+  prd: '<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 12h6M10 15.5h6M10 19h3"/></svg>',
+  jump: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
   arrow: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   left: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
@@ -67,7 +71,7 @@ for (const k of COLLECTIONS) db[k] ||= [];
 
 const ui = Object.assign({
   project: 'all', tab: 'board', more: false, doneOpen: false, delOpen: false,
-  calMode: 'week', calDate: today(), meetMore: false, meetOpen: {},
+  calMode: 'week', calDate: today(), meetMore: false,
   mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '',
 }, load(LS_UI, {}));
 const saveUi = () => store(LS_UI, ui);
@@ -552,7 +556,7 @@ function filteredMeetings() {
     .filter(m => (ui.project === 'all' || m.project === ui.project) && (ui.mProject === 'all' || m.project === ui.mProject))
     .filter(m => ui.mType === 'all' || m.type === ui.mType)
     .filter(m => (!ui.mFrom || m.date >= ui.mFrom) && (!ui.mTo || m.date <= ui.mTo))
-    .filter(m => !q || [m.title, m.points, m.conclusion].some(s => (s || '').toLowerCase().includes(q)))
+    .filter(m => !q || [m.title, m.points, m.conclusion, ...(m.docs || []).map(d => d.name)].some(s => (s || '').toLowerCase().includes(q)))
     .sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start));
 }
 
@@ -562,10 +566,10 @@ function nowSlot() {
   return [ymd(d), `${pad(d.getHours())}:${pad(d.getMinutes())}`, `${pad(e.getHours())}:${pad(e.getMinutes())}`];
 }
 
-function meetingFields(m = {}) {
+function meetingFields(m = {}, inDialog = false) {
   const [d, s, e] = nowSlot();
   return `
-    <label>飞书文档链接<input class="field" type="url" name="link" value="${esc(m.link)}" placeholder="https://xxx.feishu.cn/docx/…（可不填）"></label>
+    <label><span>会议纪要链接 <span class="req">*</span></span><input class="field" type="url" name="link" value="${esc(m.link)}" placeholder="https://xxx.feishu.cn/docx/…"${inDialog ? ' required' : ''}></label>
     <div class="grid3">
       <label>日期<input class="field" type="date" name="date" value="${esc(m.date || d)}" required></label>
       <label>开始<input class="field" type="time" name="start" value="${esc(m.start ?? s)}"></label>
@@ -581,20 +585,19 @@ function meetingFields(m = {}) {
 
 function viewMeetings() {
   const list = filteredMeetings();
-  const typeTag = m => `<span class="tag purple">${esc(m.type || '其他')}</span>`;
   return `
     <form class="panel composer" id="meetForm" autocomplete="off">
       <div class="composer-row">
         ${ICON.plus}
-        <input class="composer-input" name="title" id="meetInput" placeholder="输入会议名称，或粘贴「标题 + 飞书链接」，回车归档">
+        <input class="composer-input" name="title" id="meetInput" placeholder="粘贴「会议名称 + 会议纪要链接」，回车归档">
         <button type="button" class="btn" data-act="toggle-meet-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
-      <div class="composer-more inline-form" ${ui.meetMore ? '' : 'hidden'}>${meetingFields()}</div>
+      <div class="composer-more inline-form" ${ui.meetMore ? '' : 'hidden'}>${meetingFields()}<p class="hint">PRD 等其他文档可以在归档后点 ✎ 编辑添加。</p></div>
     </form>
 
     <div class="panel filters">
-      <label class="search">${ICON.search}<input id="mq" placeholder="搜索会议名称、讨论要点、结论…" value="${esc(ui.mq)}"></label>
+      <label class="search">${ICON.search}<input id="mq" placeholder="搜索会议名称、文档名、要点、结论…" value="${esc(ui.mq)}"></label>
       <select class="field" id="mProject">${projectOptions(ui.mProject, '全部项目')}</select>
       <select class="field" id="mType"><option value="all">全部类型</option>${MEETING_TYPES.map(t => `<option ${ui.mType === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <input class="field" type="date" id="mFrom" value="${esc(ui.mFrom)}"><span class="to">至</span><input class="field" type="date" id="mTo" value="${esc(ui.mTo)}">
@@ -602,28 +605,30 @@ function viewMeetings() {
     </div>
 
     <p class="list-meta">共 <span class="mono">${list.length}</span> 场会议</p>
-    ${list.map(m => {
-      const d = parseYmd(m.date), open = ui.meetOpen[m.id];
-      return `<div class="panel meet ${open ? 'open' : ''}" id="m-${m.id}">
-        <div class="meet-head" data-act="meet-toggle" data-id="${m.id}">
-          <div>
-            <div class="meet-title">${esc(m.title)} ${typeTag(m)} ${projectTag(m.project)}${m.link ? `<a class="doc-link" href="${esc(m.link)}" target="_blank" rel="noopener" title="${esc(m.link)}">${ICON.doc}飞书文档 ↗</a>` : ''}</div>
-            <div class="meet-time">${ICON.cal}${md(d)} 周${WEEK[d.getDay()]} ${esc(m.start || '')}${m.end ? '–' + esc(m.end) : ''}</div>
-          </div>
-          <span class="chev">${ICON.down}</span>
-        </div>
-        ${open ? `<div class="meet-body">
-          ${m.points ? `<div class="meet-sec"><h4>讨论要点</h4><p>${esc(m.points)}</p></div>` : ''}
-          ${m.conclusion ? `<div class="meet-sec"><h4>结论</h4><p>${esc(m.conclusion)}</p></div>` : ''}
-          ${m.points || m.conclusion ? '' : `<p class="meet-empty">${m.link ? '原文在飞书文档中，点上方「飞书文档 ↗」查看' : '还没有填写要点和结论'}</p>`}
-          <div class="meet-ops">
-            <button class="btn sm" data-act="meet-totask" data-id="${m.id}">结论转待办</button>
-            <button class="btn sm" data-act="meet-edit" data-id="${m.id}">编辑</button>
-            <button class="btn sm danger" data-act="meet-del" data-id="${m.id}">删除</button>
-          </div>
-        </div>` : ''}
-      </div>`;
-    }).join('') || '<div class="panel empty">没有符合条件的会议记录</div>'}`;
+    <div class="meet-list">${list.map(meetCard).join('') || '<div class="panel empty">没有符合条件的会议记录</div>'}</div>`;
+}
+
+// 会议卡片：标题行带类型、项目标签；右侧每个文档一个图标按钮（🎤 纪要 / 📄 PRD / ↗ 其他），竖线后是编辑（删除放在编辑窗口里）
+function meetCard(m) {
+  const d = parseYmd(m.date);
+  const time = m.start ? ` ${esc(m.start)}${m.end ? '–' + esc(m.end) : ''}` : '';
+  const preview = m.conclusion ? '结论：' + m.conclusion : m.points;
+  const docBtn = (url, icon, title, cls = '') =>
+    `<a class="doc-btn ${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${icon}</a>`;
+  return `<div class="card meet-card" id="m-${m.id}">
+    <div class="card-main">
+      <div class="meet-head"><span class="meet-name" data-act="meet-edit" data-id="${m.id}" title="点击编辑">${esc(m.title)}</span><span class="tag purple">${esc(m.type || '其他')}</span>${projectTag(m.project)}</div>
+      <div class="meet-when">${mdSlash(d)} 周${WEEK[d.getDay()]}${time}</div>
+      ${preview ? `<div class="meet-preview" title="${esc(preview)}">${esc(preview)}</div>` : ''}
+    </div>
+    <div class="meet-acts">
+      ${m.link ? docBtn(m.link, ICON.mic, '会议纪要')
+        : `<button class="doc-btn missing" data-act="meet-edit" data-id="${m.id}" title="还没有会议纪要链接，点击补充">${ICON.mic}</button>`}
+      ${(m.docs || []).map(doc => docBtn(doc.url, doc.kind === 'prd' ? ICON.prd : ICON.jump, doc.name || (doc.kind === 'prd' ? 'PRD' : '文档'))).join('')}
+      <span class="acts-sep"></span>
+      <button class="ib" data-act="meet-edit" data-id="${m.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
+    </div>
+  </div>`;
 }
 
 /* ========== 对话框 ========== */
@@ -692,18 +697,61 @@ function readMeeting(f) {
   };
 }
 
+// 其他文档：每行 类型（PRD / 其他）+ 文档名 + 链接
+const isPrdName = name => /prd|需求文档/i.test(name || '');
+const docRow = (doc = {}) => `<div class="doc-row">
+  <select class="field" name="docKind" data-touched="${doc.kind ? 1 : ''}"><option value="prd" ${doc.kind === 'prd' ? 'selected' : ''}>PRD</option><option value="other" ${doc.kind === 'prd' ? '' : 'selected'}>其他</option></select>
+  <input class="field" name="docName" value="${esc(doc.name)}" placeholder="文档名">
+  <input class="field" name="docUrl" type="url" value="${esc(doc.url)}" placeholder="https://…">
+  <button type="button" class="ib del" data-doc-del title="移除">${ICON.x}</button>
+</div>`;
+function readDocs(form) {
+  return $$('.doc-row', form).map(row => {
+    const kind = $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
+    const name = $('[name=docName]', row).value.trim() || (kind === 'prd' ? 'PRD' : '文档');
+    return url ? { kind, name, url } : null;
+  }).filter(Boolean);
+}
+
 function editMeeting(m) {
   openDialog(`<form>
     <h3>编辑会议</h3>
     <label>会议名称<input class="field" name="title" value="${esc(m.title)}" required></label>
-    ${meetingFields(m)}
+    ${meetingFields(m, true)}
+    <div class="docs-edit"><div class="docs-label">其他文档</div>
+      <div class="doc-rows">${(m.docs || []).map(docRow).join('')}</div>
+      <button type="button" class="add-doc" data-doc-add>${ICON.plus}添加文档</button>
+    </div>
     <div class="acts">
       <button type="button" class="btn danger left" id="dlgDel">删除</button>
+      ${m.conclusion ? '<button type="button" class="btn" id="dlgToTask">结论转待办</button>' : ''}
       <button type="button" class="btn" data-close>取消</button>
       <button class="btn primary">保存</button>
     </div>
-  </form>`, f => patch(m, { title: f.get('title').trim() || m.title, ...readMeeting(f) }));
+  </form>`, f => patch(m, { title: f.get('title').trim() || m.title, ...readMeeting(f), docs: readDocs($('#dlg form')) }));
+  const form = $('#dlg form');
+  form.addEventListener('click', e => {
+    if (e.target.closest('[data-doc-add]')) { $('.doc-rows', form).insertAdjacentHTML('beforeend', docRow()); $('.doc-row:last-child [name=docName]', form).focus(); }
+    const del = e.target.closest('[data-doc-del]');
+    if (del) del.closest('.doc-row').remove();
+  });
+  // 文档名里带 PRD / 需求文档 时自动选 PRD（手动改过类型就不再自动切）
+  form.addEventListener('input', e => {
+    if (e.target.name !== 'docName') return;
+    const sel = $('[name=docKind]', e.target.closest('.doc-row'));
+    if (!sel.dataset.touched) sel.value = isPrdName(e.target.value) ? 'prd' : 'other';
+  });
+  form.addEventListener('change', e => { if (e.target.name === 'docKind') e.target.dataset.touched = '1'; });
   $('#dlgDel').onclick = () => { dlg.close(); removeMeeting(m); };
+  const tt = $('#dlgToTask');
+  if (tt) tt.onclick = () => { dlg.close(); meetingToTasks(m); };
+}
+
+function meetingToTasks(m) {
+  const lines = (m.conclusion || '').split(/\n+/).map(s => s.replace(/^[\s\-*•\d.、)）]+/, '').trim()).filter(Boolean);
+  if (!lines.length) { toast('这场会议还没有填写结论'); return; }
+  lines.forEach(l => addTask(l, { project: m.project, note: `来自会议：${m.title}（${m.date}）` }));
+  toast(`已生成 ${lines.length} 条待办`);
 }
 
 function removeMeeting(m) {
@@ -758,7 +806,7 @@ function openSearch() {
     if (!h) return;
     dlg.close();
     if (h.kind === 'task') { ui.tab = 'board'; if (h.o.status === 'done') ui.doneOpen = true; }
-    else { ui.tab = 'meetings'; ui.meetOpen[h.o.id] = true; }
+    else { ui.tab = 'meetings'; }
     if (!inScope(h.o)) ui.project = 'all';
     saveUi(); render();
     const el = document.getElementById((h.kind === 'task' ? 't-' : 'm-') + h.o.id);
@@ -994,17 +1042,8 @@ document.addEventListener('click', e => {
       ui.calDate = ymd(ui.calMode === 'week' ? addDays(d, 7 * n) : new Date(d.getFullYear(), d.getMonth() + n, 1));
       saveUi(); render(); break;
     }
-    case 'meet-toggle': ui.meetOpen[id] = !ui.meetOpen[id]; saveUi(); render(); break;
     case 'meet-edit': editMeeting(findMeet(id)); break;
     case 'meet-del': removeMeeting(findMeet(id)); break;
-    case 'meet-totask': {
-      const m = findMeet(id);
-      const lines = (m.conclusion || '').split(/\n+/).map(s => s.replace(/^[\s\-*•\d.、)）]+/, '').trim()).filter(Boolean);
-      if (!lines.length) { toast('这场会议还没有填写结论'); break; }
-      lines.forEach(l => addTask(l, { project: m.project, note: `来自会议：${m.title}（${m.date}）` }));
-      toast(`已生成 ${lines.length} 条待办`);
-      break;
-    }
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
   }
 });
@@ -1059,23 +1098,22 @@ document.addEventListener('submit', e => {
     const fd = new FormData(f);
     const raw = fd.get('title').trim();
     if (!raw) return;
-    // 支持直接粘贴「标题 + 飞书链接」：链接单独存，剩下的作标题
+    // 支持直接粘贴「会议名称 + 纪要链接」：链接存为会议纪要，剩下的作标题
     const pasted = raw.match(/https?:\/\/\S+/i)?.[0] || '';
-    const title = raw.replace(pasted, '').trim() || '飞书文档';
+    const title = raw.replace(pasted, '').trim() || '会议纪要';
     const base = ui.meetMore ? readMeeting(fd) : (() => { const [d, s, en] = nowSlot(); return { date: d, start: s, end: en, type: '其他', project: ui.project !== 'all' ? ui.project : '', points: '', conclusion: '', link: '' }; })();
     base.link = base.link || safeLink(pasted);
+    if (!base.link) { toast('请附上会议纪要链接：在会议名称后面粘贴链接即可'); return; }
     const dup = findByLink(base.link);
     if (dup) {
-      ui.meetOpen[dup.id] = true; saveUi(); render();
       const el = document.getElementById('m-' + dup.id);
       if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash'); }
       toast(`这个链接已经归档过：${dup.title}`);
       return;
     }
     if (ui.meetMore) f.reset(); else f.title.value = '';
-    const m = { id: uid(), title, ...base, createdAt: now(), deletedAt: 0, u: now() };
+    const m = { id: uid(), title, ...base, docs: [], createdAt: now(), deletedAt: 0, u: now() };
     db.meetings.push(m);
-    ui.meetOpen[m.id] = true;
     commit();
     $('#meetInput').focus();
   }
