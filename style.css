@@ -307,6 +307,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; line-height
 .m-chip.ev-due { background: var(--red-bg); color: var(--red); }
 /* 变更记录 */
 .timeline { border-top: 1px dashed var(--line-2); padding-top: 10px; }
+.d-sec .timeline { border-top: 0; padding-top: 0; }
 .tl-title { font-size: 13px; color: var(--muted); margin-bottom: 6px; line-height: 19px; }
 .tl-item { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 3px 0; position: relative; line-height: 19px; }
 .tl-item i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }

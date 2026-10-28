@@ -975,8 +975,6 @@ function openTaskDetail(t) {
   const sec = (h, body) => body ? `<div class="d-sec"><h4><i></i>${h}</h4>${body}</div>` : '';
   const meeting = t.meeting && db.meetings.find(m => m.id === t.meeting && !m.deletedAt);
   const parent = t.parent && findTask(t.parent);
-  const times = [['创建', t.createdAt], ['开始', t.startedAt], ['完成', t.doneAt]].filter(([, v]) => v)
-    .map(([k, v]) => `<span class="dm">${k} <b class="mono">${fmtTime(v)}</b></span>`).join('');
   openDialog(`<div class="detail" tabindex="-1" autofocus>
     <div class="d-head">
       <div class="d-main"><div class="d-title">${esc(title)}</div>
@@ -988,7 +986,6 @@ function openTaskDetail(t) {
     ${sec('备注', t.note?.trim() && `<div class="md">${renderMd(t.note.trim())}</div>`)}
     ${sec('关联', [meeting && `<div class="d-todo" data-act="meet-open" data-id="${meeting.id}"><span class="d-todo-text">会议：${esc(meeting.title)}</span>${ICON.arrow}</div>`,
       parent && `<div class="d-todo" data-act="goto-task" data-id="${parent.id}"><span class="d-todo-text">上一步：${esc(firstLine(parent.text))}</span>${ICON.arrow}</div>`].filter(Boolean).join(''))}
-    ${sec('时间', `<div class="done-meta">${times}${t.status !== 'todo' ? `<span class="dm" title="工时：工作日 ${WORK_LABEL} 内的进行时长（午休不计）">${ICON.timer}${fmtHours(workHours(t))}</span>` : ''}</div>`)}
     ${sec('变更记录', `<div class="timeline">${logOf(t).map((e, i, l) => `
       <div class="tl-item tl-${e.a}"><i></i><span class="mono">${fmtTime(e.t)}</span><b>${LOG_TEXT[e.a] || e.a}</b>${i ? `<em>${fmtDur(e.t - l[i - 1].t)}后</em>` : ''}</div>`).join('')}</div>`)}
     </div>
