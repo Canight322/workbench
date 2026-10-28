@@ -660,14 +660,16 @@ function openMeetingDetail(m) {
   const d = parseYmd(m.date);
   const time = m.start ? ` ${esc(m.start)}${m.end ? '–' + esc(m.end) : ''}` : '';
   const mine = db.tasks.filter(t => t.meeting === m.id && !t.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
-  const sec = (title, body) => body ? `<div class="d-sec"><h4>${title}</h4>${body}</div>` : '';
-  const text = v => v ? `<p>${esc(v)}</p>` : '';
-  openDialog(`<div class="detail">
+  const sec = (title, body) => body ? `<div class="d-sec"><h4><i></i>${title}</h4>${body}</div>` : '';
+  const text = v => v ? `<div class="md">${renderMd(v)}</div>` : '';
+  // tabindex + autofocus：打开时焦点落在窗口本身，不让第一个文档按钮出现焦点框
+  openDialog(`<div class="detail" tabindex="-1" autofocus>
     <div class="d-head">
       <div class="d-main"><div class="d-title">${esc(m.title)}</div>
         <div class="d-sub"><span class="d-when">${mdSlash(d)} 周${WEEK[d.getDay()]}${time}</span><span class="tag purple">${esc(m.type || '其他')}</span>${projectTag(m.project)}</div></div>
       ${meetActs(m)}
     </div>
+    <div class="d-body">
     ${m.summary ? `<div class="d-summary">${esc(m.summary)}</div>` : ''}
     ${sec('讨论要点', text(m.points))}
     ${sec('结论', text(m.conclusion))}
@@ -675,9 +677,40 @@ function openMeetingDetail(m) {
       <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span><span class="d-todo-text">${esc(firstLine(t.text))}</span>${ICON.arrow}</div>`).join(''))}
     ${sec('他人待办', text(m.othersTodos))}
     ${m.summary || m.points || m.conclusion || mine.length || m.othersTodos ? '' : '<p class="d-empty">还没有填写总结、要点和待办，点 ✎ 补充</p>'}
+    </div>
   </div>`, null, 'detail-dlg');
   // 点窗口外（遮罩）关闭
   dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+}
+
+// 轻量 Markdown：列表（1. / 1.1 / -）悬挂缩进，层级按缩进排名；有下级的条目、冒号前的短标签加粗；支持 **粗体**、`代码`、# 小标题
+function mdInline(s, boldLabel) {
+  let h = esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  if (boldLabel) h = h.replace(/^([^：:<>。，,]{1,18}?)([：:])(?=\s*\S)/, '<b>$1$2</b>');
+  return h;
+}
+function renderMd(src) {
+  const items = String(src || '').replace(/\r/g, '').split('\n').map(line => {
+    if (!line.trim()) return { kind: 'gap' };
+    const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length;
+    const t = line.trim();
+    let m;
+    if ((m = t.match(/^#{1,4}\s+(.+)/))) return { kind: 'h', text: m[1], indent };
+    if ((m = t.match(/^(\d+(?:\.\d+)*)[.、)）]?\s+(.+)/))) return { kind: 'li', marker: m[1].includes('.') ? m[1] : m[1] + '.', text: m[2], indent };
+    if ((m = t.match(/^[-*•·]\s+(.+)/))) return { kind: 'li', marker: '•', bullet: true, text: m[1], indent };
+    return { kind: 'p', text: t, indent };
+  });
+  // 缩进按出现过的值排名得到层级，2/3/4 空格混用也不乱
+  const indents = [...new Set(items.filter(i => i.kind === 'li' || i.kind === 'p').map(i => i.indent))].sort((a, b) => a - b);
+  const lv = i => Math.min(indents.indexOf(i.indent), 4);
+  return items.map((it, k) => {
+    if (it.kind === 'gap') return '<div class="md-gap"></div>';
+    if (it.kind === 'h') return `<div class="md-h">${mdInline(it.text)}</div>`;
+    if (it.kind === 'p') return `<div class="md-p" style="--lv:${lv(it)}">${mdInline(it.text, true)}</div>`;
+    const next = items.slice(k + 1).find(n => n.kind === 'li' || n.kind === 'p');
+    const group = next && lv(next) > lv(it);
+    return `<div class="md-li${it.bullet ? ' bullet' : ''}${group ? ' group' : ''}" style="--lv:${lv(it)}"><span class="md-mk">${it.marker}</span><span>${mdInline(it.text, true)}</span></div>`;
+  }).join('');
 }
 
 // 「我的待办」每行生成一条关联待办；已有同名关联待办（含已删除）的不重复生成
