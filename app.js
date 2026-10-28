@@ -632,7 +632,7 @@ function meetingFields(m = {}, inDialog = false) {
     <label>一句话总结<input class="field" name="summary" value="${esc(m.summary)}" placeholder="卡片上只显示这一句"></label>
     <label>讨论要点<textarea class="field" name="points">${esc(m.points)}</textarea></label>
     <label>结论<textarea class="field" name="conclusion">${esc(m.conclusion)}</textarea></label>
-    <label><span>我的待办 <span class="hint-inline">每行一条，保存时新行自动生成待办并关联；删掉某行不会删除已生成的待办</span></span><textarea class="field" name="myTodos">${esc(m.myTodos)}</textarea></label>
+    <label><span>我的待办 <span class="hint-inline">每行一条「短标题：详情」，短标题作待办、详情作备注；保存时新行生成待办，改过的行更新原待办；删掉某行不会删除已生成的待办</span></span><textarea class="field" name="myTodos" placeholder="例如：整理首批商家清单：按 GMV 排序，周五前发群里">${esc(m.myTodos)}</textarea></label>
     <label>他人待办<textarea class="field" name="othersTodos" placeholder="例如：@叙璋 周四前确认结算规则">${esc(m.othersTodos)}</textarea></label>`;
 }
 
@@ -758,6 +758,12 @@ function meetingEndTs(m) {
   const ts = m.date && clock ? new Date(`${m.date}T${clock}`).getTime() : 0;
   return ts && ts < now() ? ts : now();
 }
+// 「我的待办」每行写成「短标题：详情」，短标题作待办内容，详情作备注；没有冒号就只有标题
+// 冒号不能是时间（10:30）或链接（https://）里的
+function splitTodo(line) {
+  const m = (line || '').match(/^(.+?)\s*(?:：|(?<!\d):(?!\/\/|\d))\s*(.+)$/s);
+  return m ? { title: m[1].trim(), detail: m[2].trim() } : { title: (line || '').trim(), detail: '' };
+}
 const todoLines = v => (v || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
 // 两段文字的相近程度（相邻两字的重合比例，0～1）
 function similarity(a, b) {
@@ -769,7 +775,7 @@ function similarity(a, b) {
 }
 // 「我的待办」每行对应一条关联待办，待办上的 todo 记着它来自哪一行（旧数据没有时按待办内容算）
 // 文档里改了某一行：同一位置被替换、或新旧两行足够相近时，更新原来那条待办（状态和变更记录保留），不再新建；
-// 待办在看板上改过名字的，只更新对应关系，不改名字。真正新增的行才生成新待办（创建时间为会议结束时间）
+// 待办在看板上改过内容 / 备注的，那一项保持你改的，不覆盖。真正新增的行才生成新待办（创建时间为会议结束时间）
 function syncMyTodos(m, prev = '') {
   const lines = todoLines(m.myTodos), before = todoLines(prev);
   const linked = db.tasks.filter(t => t.meeting === m.id);
@@ -785,12 +791,19 @@ function syncMyTodos(m, prev = '') {
     if (!best || best.score < 0.35) return true;
     const t = best.t;
     free.splice(free.indexOf(t), 1);
-    Object.assign(t, t.text.trim() === keyOf(t) && !best.orphan ? { text: l } : {}, { todo: l, u: now() });
+    const was = splitTodo(keyOf(t)), next = splitTodo(l), patch = { todo: l, u: now() };
+    if (!best.orphan && [was.title, keyOf(t)].includes(t.text.trim())) patch.text = next.title;
+    if (!best.orphan && [was.detail, ''].includes((t.note || '').trim())) patch.note = next.detail;
+    Object.assign(t, patch);
     changed++;
     return false;
   });
   const createdAt = meetingEndTs(m);
-  fresh.forEach(l => { const t = addTask(l, { project: m.project, meeting: m.id, createdAt, silent: true }); t.todo = l; });
+  fresh.forEach(l => {
+    const { title, detail } = splitTodo(l);
+    const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt, silent: true });
+    t.todo = l;
+  });
   return { n: fresh.length, changed };
 }
 const todoMsg = r => [r.n && `生成 ${r.n} 条关联待办`, r.changed && `更新 ${r.changed} 条关联待办`].filter(Boolean).join('，');
