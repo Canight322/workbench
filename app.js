@@ -53,7 +53,8 @@ const ICON = {
 /* ========== 数据 ========== */
 const LS_DATA = 'wb.data', LS_CFG = 'wb.cfg', LS_UI = 'wb.ui';
 const COLORS = ['#e05a4f', '#f0a032', '#8f62e0', '#3fae74', '#4a83e6', '#6f6a60', '#d4609e', '#2fa8b5'];
-const MEETING_TYPES = ['周会', '需求评审', '客户沟通', '项目同步', '复盘', '其他'];
+// 常用会议类型；纪要里写了新类型就直接用，下拉和筛选里会自动出现
+const MEETING_TYPES = ['周会', '需求讨论', '需求评审', '技术方案评审', '测试方案评审', '产品分享会', '项目对接'];
 const STATUS = { todo: '未完成', doing: '进行中', done: '已完成' };
 const COLLECTIONS = ['projects', 'tasks', 'meetings'];
 
@@ -82,6 +83,18 @@ const projectOf = id => db.projects.find(p => p.id === id);
 const inScope = x => ui.project === 'all' || x.project === ui.project;
 const liveTasks = () => db.tasks.filter(t => !t.deletedAt && inScope(t));
 const liveMeetings = () => db.meetings.filter(m => !m.deletedAt && inScope(m));
+const meetingTypes = () => [...new Set([...MEETING_TYPES, ...db.meetings.filter(m => !m.deletedAt && m.type).map(m => m.type)])];
+// 项目名先精确匹配，再看互相包含（如「抖音买单二期项目」）；对不上就留空，不新建项目
+function matchProject(name) {
+  const v = (name || '').trim().toLowerCase();
+  if (!v) return '';
+  const ps = projects(), lc = p => p.name.toLowerCase();
+  const hit = ps.find(p => lc(p) === v) || ps.filter(p => v.includes(lc(p)) || lc(p).includes(v)).sort((a, b) => b.name.length - a.name.length)[0];
+  return hit?.id || '';
+}
+// 纪要里没写类型 / 项目时，从会议名称或文件名里找（如「…-技术方案评审」）
+const typeIn = s => meetingTypes().filter(t => t !== '其他' && s.includes(t)).sort((a, b) => b.length - a.length)[0] || '';
+const projectIn = s => projects().filter(p => s.toLowerCase().includes(p.name.toLowerCase())).sort((a, b) => b.name.length - a.name.length)[0]?.id || '';
 
 function commit() {
   db.updatedAt = now();
@@ -579,7 +592,7 @@ function meetingFields(m = {}, inDialog = false) {
       <label>结束<input class="field" type="time" name="end" value="${esc(m.end ?? e)}"></label>
     </div>
     <div class="grid2">
-      <label>会议类型<select class="field" name="type">${MEETING_TYPES.map(t => `<option ${(m.type || '其他') === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label>会议类型<input class="field" name="type" list="typeList${inDialog ? 'D' : ''}" value="${esc(m.type || '')}" placeholder="选择或输入新类型"><datalist id="typeList${inDialog ? 'D' : ''}">${meetingTypes().map(t => `<option value="${esc(t)}">`).join('')}</datalist></label>
       <label>关联项目<select class="field" name="project">${projectOptions(m.project ?? (ui.project !== 'all' ? ui.project : ''))}</select></label>
     </div>
     <label>一句话总结<input class="field" name="summary" value="${esc(m.summary)}" placeholder="卡片上只显示这一句"></label>
@@ -606,7 +619,7 @@ function viewMeetings() {
     <div class="panel filters">
       <label class="search">${ICON.search}<input id="mq" placeholder="搜索会议名称、文档名、要点、结论…" value="${esc(ui.mq)}"></label>
       <select class="field" id="mProject">${projectOptions(ui.mProject, '全部项目')}</select>
-      <select class="field" id="mType"><option value="all">全部类型</option>${MEETING_TYPES.map(t => `<option ${ui.mType === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <select class="field" id="mType"><option value="all">全部类型</option>${meetingTypes().map(t => `<option ${ui.mType === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <input class="field" type="date" id="mFrom" value="${esc(ui.mFrom)}"><span class="to">至</span><input class="field" type="date" id="mTo" value="${esc(ui.mTo)}">
       ${ui.mq || ui.mProject !== 'all' || ui.mType !== 'all' || ui.mFrom || ui.mTo ? '<button class="btn sm" data-act="meet-clear">清除筛选</button>' : ''}
     </div>
@@ -680,7 +693,7 @@ function syncMyTodos(m) {
 // 纪要链接必填；文档改过后更新原来那条会议记录；「我的待办」新增的行生成关联待办
 const LS_IMPORT = 'wb.import';  // 已读过的纪要文件：文件名 → 修改时间
 const MD_KEYS = {
-  会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 项目: 'project', PRD: 'prd', 其他文档: 'other',
+  会议名称: 'title', 纪要链接: 'link', 日期: 'date', 时间: 'time', 类型: 'type', 会议类型: 'type', 项目: 'project', 关联项目: 'project', PRD: 'prd', 其他文档: 'other',
   一句话总结: 'summary', 讨论要点: 'points', 结论: 'conclusion', 我的待办: 'myTodos', 他人待办: 'othersTodos',
 };
 
@@ -709,7 +722,6 @@ function parseMinutes(text, fileName) {
   const lines = k => val(k).split('\n').map(s => s.trim()).filter(Boolean);
   const [start, end] = val('time').split(/[-–—~～至]/);
   const fnClock = fileName.match(/^\d{8}-(\d{2})(\d{2})/);
-  const project = projects().find(p => p.name === val('project'));
   // 文档每行「文档名 | 链接」或 Markdown 链接「[文档名](链接)」，只有链接时名字留空
   const docs = ['prd', 'other'].flatMap(kind => lines(kind).map(l => {
     const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
@@ -720,7 +732,8 @@ function parseMinutes(text, fileName) {
     title: val('title').replace(/^#+\s*|\*\*/g, '').trim(), link: findUrl(val('link')),
     date: normDate(val('date'), fileName),
     start: normClock(start) || (val('time') ? '' : fnClock ? `${fnClock[1]}:${fnClock[2]}` : ''), end: normClock(end),
-    type: MEETING_TYPES.includes(val('type')) ? val('type') : '其他', project: project?.id || '',
+    // 类型、项目留空时由导入时从会议名称 / 文件名里补；项目名写了但对不上时记下来提示
+    type: val('type').replace(/\*\*/g, '').trim(), project: matchProject(val('project')), projectName: val('project'),
     summary: val('summary'), points: val('points'), conclusion: val('conclusion'),
     myTodos: lines('myTodos').map(l => l.replace(/^(?:[-*•]|\d+[.、)）])\s*/, '')).filter(Boolean).join('\n'), othersTodos: val('othersTodos'), docs,
   };
@@ -733,7 +746,7 @@ async function importMinutes(files, all = false) {
   const note = (name, st, msg = '') => res.files.push({ name, st, msg });
   for (const file of files) {
     if (!/\.md$/i.test(file.name) || (!all && seen[file.name] === file.lastModified)) continue;
-    const m = parseMinutes(await file.text(), file.name);
+    const { projectName, ...m } = parseMinutes(await file.text(), file.name);
     seen[file.name] = file.lastModified;  // 缺字段的文件改好后修改时间会变，到时再读
     if (!m.title || !m.link) {
       res.bad.push(file.name);
@@ -742,21 +755,27 @@ async function importMinutes(files, all = false) {
     }
     // 同一份纪要：先按纪要链接找，链接改过时按来源文件找；找到就用文档内容更新原记录
     const old = findByLink(m.link) || db.meetings.find(x => !x.deletedAt && x.src === file.name);
+    // 类型 / 项目：纪要里写的 > 网页上已设的 > 从会议名称、文件名里找到的；类型都没有时记为「其他」
+    const guess = `${m.title} ${file.name}`, keepType = old?.type && old.type !== '其他' ? old.type : '';
+    m.type = m.type || keepType || typeIn(guess) || '其他';
+    m.project = m.project || old?.project || projectIn(guess);
+    const info = rec => [rec.title, `类型：${rec.type}`, `项目：${projectOf(rec.project)?.name || '无'}`,
+      projectName && !matchProject(projectName) ? `纪要里的项目「${projectName}」没有对上现有项目` : ''].filter(Boolean).join(' · ');
     if (!old) {
       const rec = { id: uid(), ...m, src: file.name, createdAt: now(), deletedAt: 0, u: now() };
       db.meetings.push(rec);
       res.todos += syncMyTodos(rec);
       res.added.push(rec.title);
-      note(file.name, 'add', rec.title);
+      note(file.name, 'add', info(rec));
       continue;
     }
-    // 文档里没写项目时保留网页上设的项目；网页上补的文档也保留
-    const next = { ...m, project: m.project || old.project, docs: mergeDocs(m.docs, old.docs) };
-    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', old.title); continue; }
+    // 网页上补的文档也保留
+    const next = { ...m, docs: mergeDocs(m.docs, old.docs) };
+    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); continue; }
     Object.assign(old, next, { src: file.name, u: now() });
     res.todos += syncMyTodos(old);
     res.updated.push(old.title);
-    note(file.name, 'upd', old.title);
+    note(file.name, 'upd', info(old));
   }
   store(LS_IMPORT, seen);
   if (res.added.length || res.updated.length) commit();
@@ -915,7 +934,7 @@ function readMeeting(f) {
   return {
     link: safeLink(f.get('link')),
     date: f.get('date') || today(), start: f.get('start') || '', end: f.get('end') || '',
-    type: f.get('type') || '其他', project: f.get('project') || '',
+    type: (f.get('type') || '').trim() || '其他', project: f.get('project') || '',
     summary: (f.get('summary') || '').trim(),
     points: (f.get('points') || '').trim(), conclusion: (f.get('conclusion') || '').trim(),
     myTodos: (f.get('myTodos') || '').trim(), othersTodos: (f.get('othersTodos') || '').trim(),
