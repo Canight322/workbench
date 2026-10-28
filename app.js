@@ -693,13 +693,15 @@ function normDate(s, fileName) {
   m = fileName.match(/^(\d{4})(\d{2})(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : today();
 }
+const findUrl = s => (String(s || '').match(/https?:\/\/[^\s)\]>）]+/i) || [''])[0];
 const normClock = s => { const m = (s || '').match(/(\d{1,2})[:：](\d{2})/); return m ? `${pad(m[1])}:${m[2]}` : ''; };
 
 function parseMinutes(text, fileName) {
   const raw = {};
   let cur = null;
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*【(.+?)】(.*)$/);
+    // 兼容「- **【纪要链接】**：…」「## 【讨论要点】」这类写法
+    const m = line.match(/^\s*(?:[-*>#]+\s*)?(?:\*\*|__)?【(.+?)】(?:\*\*|__)?\s*[:：]?\s*(.*)$/);
     if (m && MD_KEYS[m[1].trim()]) { cur = MD_KEYS[m[1].trim()]; raw[cur] = m[2].trim() ? [m[2]] : []; }
     else if (cur) raw[cur].push(line);
   }
@@ -708,13 +710,14 @@ function parseMinutes(text, fileName) {
   const [start, end] = val('time').split(/[-–—~～至]/);
   const fnClock = fileName.match(/^\d{8}-(\d{2})(\d{2})/);
   const project = projects().find(p => p.name === val('project'));
-  // 文档每行「文档名 | 链接」，只有链接时名字留空
+  // 文档每行「文档名 | 链接」或 Markdown 链接「[文档名](链接)」，只有链接时名字留空
   const docs = ['prd', 'other'].flatMap(kind => lines(kind).map(l => {
-    const i = l.lastIndexOf('|'), name = i < 0 ? '' : l.slice(0, i).trim(), url = safeLink(i < 0 ? l : l.slice(i + 1));
+    const md = l.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/), i = l.lastIndexOf('|');
+    const name = md ? md[1].trim() : i < 0 ? '' : l.slice(0, i).replace(/^[-*•]\s*/, '').trim(), url = md ? md[2] : findUrl(i < 0 ? l : l.slice(i + 1));
     return url ? { kind, name: name || (kind === 'prd' ? 'PRD' : '文档'), url } : null;
   })).filter(Boolean);
   return {
-    title: val('title'), link: safeLink(val('link')),
+    title: val('title').replace(/^#+\s*|\*\*/g, '').trim(), link: findUrl(val('link')),
     date: normDate(val('date'), fileName),
     start: normClock(start) || (val('time') ? '' : fnClock ? `${fnClock[1]}:${fnClock[2]}` : ''), end: normClock(end),
     type: MEETING_TYPES.includes(val('type')) ? val('type') : '其他', project: project?.id || '',
@@ -723,14 +726,20 @@ function parseMinutes(text, fileName) {
   };
 }
 
-async function importMinutes(files) {
+// 自动检查只读新建 / 修改过的文件；手动点按钮时全部重读（内容没变的不会重复导入）
+async function importMinutes(files, all = false) {
   const seen = load(LS_IMPORT, {});
-  const res = { added: [], updated: [], todos: 0, bad: [] };
+  const res = { added: [], updated: [], todos: 0, bad: [], files: [] };
+  const note = (name, st, msg = '') => res.files.push({ name, st, msg });
   for (const file of files) {
-    if (!/\.md$/i.test(file.name) || seen[file.name] === file.lastModified) continue;
+    if (!/\.md$/i.test(file.name) || (!all && seen[file.name] === file.lastModified)) continue;
     const m = parseMinutes(await file.text(), file.name);
     seen[file.name] = file.lastModified;  // 缺字段的文件改好后修改时间会变，到时再读
-    if (!m.title || !m.link) { res.bad.push(file.name); continue; }
+    if (!m.title || !m.link) {
+      res.bad.push(file.name);
+      note(file.name, 'bad', `没有读到${[!m.title && '【会议名称】', !m.link && '【纪要链接】（需要 http 开头的链接）'].filter(Boolean).join('和')}`);
+      continue;
+    }
     // 同一份纪要：先按纪要链接找，链接改过时按来源文件找；找到就用文档内容更新原记录
     const old = findByLink(m.link) || db.meetings.find(x => !x.deletedAt && x.src === file.name);
     if (!old) {
@@ -738,14 +747,16 @@ async function importMinutes(files) {
       db.meetings.push(rec);
       res.todos += syncMyTodos(rec);
       res.added.push(rec.title);
+      note(file.name, 'add', rec.title);
       continue;
     }
     // 文档里没写项目时保留网页上设的项目；网页上补的文档也保留
     const next = { ...m, project: m.project || old.project, docs: mergeDocs(m.docs, old.docs) };
-    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) continue;
+    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', old.title); continue; }
     Object.assign(old, next, { src: file.name, u: now() });
     res.todos += syncMyTodos(old);
     res.updated.push(old.title);
+    note(file.name, 'upd', old.title);
   }
   store(LS_IMPORT, seen);
   if (res.added.length || res.updated.length) commit();
@@ -758,7 +769,22 @@ function importReport(r, manual) {
   if (r.updated.length) parts.push(`已更新 ${r.updated.length} 场：${r.updated.join('、')}`);
   if (r.todos) parts.push(`生成 ${r.todos} 条关联待办`);
   if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
-  if (parts.length || manual) toast(parts.join('；') || '没有新建或修改过的纪要');
+  if (manual) return importResult(r);
+  if (parts.length) toast(parts.join('；'));
+}
+// 手动检查时弹窗列出每个文件的结果，不会像提示条那样几秒就消失
+const IMPORT_ST = { add: ['新增', 'green'], upd: ['已更新', 'green'], same: ['无变化', ''], bad: ['未导入', 'red'] };
+function importResult(r) {
+  openDialog(`<form>
+    <h3>导入纪要${imp.dir ? `：${esc(imp.dir.name)}` : ''}</h3>
+    ${r.files.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${r.files.map(f => `<tr>
+      <td><span class="tag ${IMPORT_ST[f.st][1]}">${IMPORT_ST[f.st][0]}</span></td>
+      <td class="t" title="${esc(f.name)}">${esc(f.name)}${f.msg ? `<div class="hint">${esc(f.msg)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="hint">文件夹里没有 .md 文件。纪要需要直接放在这个文件夹里，子文件夹不会读取。</p>'}
+    ${r.todos ? `<p class="hint">生成了 ${r.todos} 条关联待办。</p>` : ''}
+    ${r.bad.length ? '<p class="hint">未导入的文件请按模板补上【会议名称】和【纪要链接】，保存后会自动重新导入。</p>' : ''}
+    <div class="acts"><button class="btn primary">好的</button></div>
+  </form>`, () => {});
 }
 
 // 文件夹句柄存在 IndexedDB（localStorage 存不了），下次打开页面还能用
@@ -796,7 +822,7 @@ async function autoImport(manual = false) {
   }
   if (!manual && now() - imp.last < 5 * 6e4) return;
   imp.last = now();
-  importReport(await importMinutes(await dirFiles(imp.dir)), manual);
+  importReport(await importMinutes(await dirFiles(imp.dir), manual), manual);
 }
 const runImport = manual => autoImport(manual).catch(e => toast('导入纪要失败：' + (e.message || e)));
 
@@ -817,7 +843,7 @@ function pickMinutesFiles() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.multiple = true; inp.webkitdirectory = true; inp.hidden = true;
   document.body.appendChild(inp);
-  inp.onchange = () => { inp.remove(); importMinutes([...inp.files]).then(r => importReport(r, true)); };
+  inp.onchange = () => { inp.remove(); importMinutes([...inp.files], true).then(r => importReport(r, true)); };
   inp.click();
 }
 function importBtn() {

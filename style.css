@@ -156,6 +156,7 @@ textarea.field { resize: vertical; min-height: 72px; }
 .tag.purple { background: var(--purple-bg); color: var(--purple); }
 .tag.red { background: var(--red-bg); color: var(--red); }
 .tag.orange { background: var(--orange-bg); color: var(--orange); }
+.tag.green { background: var(--green-bg); color: var(--green); }
 .empty { color: var(--faint); text-align: center; padding: 28px 0; font-size: 14px; line-height: 20px; }
 
 /* composer */
