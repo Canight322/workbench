@@ -573,3 +573,10 @@ button.doc-btn { cursor: pointer; }
 .sub-rows:empty { display: none; }
 .sub-row { display: grid; grid-template-columns: 20px 1fr 30px; gap: 6px; align-items: center; }
 .dlg .sub-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--green); margin: 0 auto; }
+
+/* 长按拖动子任务 */
+.sub, .sub-row { -webkit-touch-callout: none; }
+.sub.lifted, .sub-row.lifted { position: fixed; z-index: 1000; margin: 0 !important; background: var(--card); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.18), 0 0 0 1px var(--line-2); transform: scale(1.02); cursor: grabbing; user-select: none; pointer-events: none; }
+.sub.lifted { padding: 8px 12px !important; }
+.sub-row.lifted { padding: 6px 8px; }
+.sub-ph { border: 1.5px dashed var(--green); border-radius: 10px; background: var(--green-bg); opacity: .6; }

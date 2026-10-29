@@ -1302,10 +1302,55 @@ const docList = docs => (docs || []).length ? [...docs].sort((a, b) => kindOrder
 function subList(t, max, full) {
   const subs = t.subs || [];
   if (!subs.length) return '';
-  const rows = subs.slice(0, max).map(x => `<label class="sub ${x.done ? 'done' : ''}"><input type="checkbox" ${x.done ? 'checked' : ''} data-act="sub-toggle" data-id="${t.id}" data-sub="${x.id}"><span>${esc(x.text)}</span>${full ? `<button type="button" class="ib del" data-act="sub-del" data-id="${t.id}" data-sub="${x.id}" title="删除">${ICON.x}</button>` : ''}</label>`).join('');
+  const rows = subs.slice(0, max).map(x => `<label class="sub ${x.done ? 'done' : ''}" data-sid="${x.id}"><input type="checkbox" ${x.done ? 'checked' : ''} data-act="sub-toggle" data-id="${t.id}" data-sub="${x.id}"><span>${esc(x.text)}</span>${full ? `<button type="button" class="ib del" data-act="sub-del" data-id="${t.id}" data-sub="${x.id}" title="删除">${ICON.x}</button>` : ''}</label>`).join('');
   return `<div class="subs${full ? ' full' : ''}">${rows}${subs.length > max ? `<div class="sub-more" data-act="task-open" data-id="${t.id}">还有 ${subs.length - max} 项…</div>` : ''}</div>`;
 }
 const subTag = t => t.subs?.length ? `<span class="tag ${t.subs.every(x => x.done) ? 'green' : ''}">☑ ${t.subs.filter(x => x.done).length}/${t.subs.length}</span>` : '';
+// 长按（0.35 秒）子任务：这一行浮起来变成卡片，跟着指针拖动，其他行让位，松手放下；
+// 长按前移动了就当作普通点击 / 选字 / 滚动。done 拿到新顺序（各行的 data-sid）
+function sortable(box, rowSel, done) {
+  box.addEventListener('pointerdown', e => {
+    const row = e.target.closest(rowSel);
+    if (!row || e.button || e.target.closest('[data-sub-del], [data-act=sub-del]')) return;
+    const sx = e.clientX, sy = e.clientY;
+    let lifted = false, ph = null, offset = 0;
+    const timer = setTimeout(() => {
+      lifted = true;
+      const r = row.getBoundingClientRect();
+      offset = sy - r.top;
+      ph = Object.assign(document.createElement('div'), { className: 'sub-ph' });
+      ph.style.height = r.height + 'px';
+      row.after(ph);
+      Object.assign(row.style, { width: r.width + 'px', left: r.left + 'px', top: r.top + 'px' });
+      row.classList.add('lifted');
+      document.activeElement?.blur?.();
+      navigator.vibrate?.(15);
+    }, 350);
+    const move = ev => {
+      if (!lifted) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 6) end(); return; }
+      ev.preventDefault();
+      row.style.top = ev.clientY - offset + 'px';
+      // 指针越过哪一行的中线，占位就移到那一行前 / 后
+      const others = [...box.querySelectorAll(rowSel)].filter(x => x !== row);
+      const before = others.find(x => { const b = x.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+      before ? before.before(ph) : others.at(-1)?.after(ph);
+    };
+    const end = () => {
+      clearTimeout(timer);
+      removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end);
+      if (!lifted) return;
+      ph.replaceWith(row);
+      row.classList.remove('lifted'); row.removeAttribute('style');
+      dragEndAt = now();
+      done([...box.querySelectorAll(rowSel)].map(x => x.dataset.sid));
+    };
+    addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', end); addEventListener('pointercancel', end);
+  });
+}
+// 松手时浏览器会补一次点击（会误勾选子任务），拖完 300ms 内的点击吞掉
+let dragEndAt = 0;
+addEventListener('click', e => { if (now() - dragEndAt < 300) { e.preventDefault(); e.stopPropagation(); } }, true);
+const reorder = (subs, ids) => ids.map(id => subs.find(x => x.id === id)).filter(Boolean).concat(subs.filter(x => !ids.includes(x.id)));
 // 改了子任务后，详情窗口开着就原地刷新（保持滚动位置和输入行）
 function setSubs(t, subs) {
   patch(t, { subs });
@@ -1340,6 +1385,8 @@ function openTaskDetail(t) {
     </div>
   </div>`, null, 'detail-dlg');
   dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+  const subsBox = $('#dlg .subs.full');
+  if (subsBox) sortable(subsBox, '.sub', ids => setSubs(t, reorder(t.subs, ids)));
 }
 
 // 编辑窗口里的子任务：勾选、改文字、删除、添加，点「保存」才生效
@@ -1356,6 +1403,8 @@ function wireSubs(form) {
     const del = e.target.closest('[data-sub-del]');
     if (del) del.closest('.sub-row').remove();
   });
+  // 长按拖动排序；保存时按行的顺序读出
+  sortable($('.sub-rows', form), '.sub-row', () => {});
   // 在子任务里按回车：接着加下一条，而不是保存整个窗口
   form.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.name === 'subText') { e.preventDefault(); add(); } });
 }
