@@ -592,7 +592,8 @@ function viewBoard() {
   const cardBody = t => `
       <div class="card-text" data-act="task-open" data-id="${t.id}" title="点击查看">${cardText(t.text)}</div>
       ${t.note?.trim() ? `<div class="card-note" data-act="task-open" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
-      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${dueTag(t)}${relTags(t)}${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
+      ${subList(t, 4)}
+      <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${subTag(t)}${dueTag(t)}${relTags(t)}${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
   // 操作按钮放在卡片右侧，不单独占一行；进行中卡片为「完成」+ 一排小图标
   const card = t => t.status === 'todo' ? `
     <div class="card todo-card" id="t-${t.id}">
@@ -1297,6 +1298,23 @@ const docList = docs => (docs || []).length ? [...docs].sort((a, b) => kindOrder
   return d.path ? `<div class="d-todo d-doc" data-act="doc-view" data-path="${esc(d.path)}">${inner}</div>` : `<a class="d-todo d-doc" href="${esc(d.url)}" target="_blank" rel="noopener">${inner}</a>`;
 }).join('') : '';
 // 任务详情：只读，点窗口外关闭；点 ✎ 才进入编辑（删除在编辑窗口里）
+// 子任务：卡片上最多列 max 条，勾选直接生效；详情里还能删除。全部勾完不会自动完成主任务
+function subList(t, max, full) {
+  const subs = t.subs || [];
+  if (!subs.length) return '';
+  const rows = subs.slice(0, max).map(x => `<label class="sub ${x.done ? 'done' : ''}"><input type="checkbox" ${x.done ? 'checked' : ''} data-act="sub-toggle" data-id="${t.id}" data-sub="${x.id}"><span>${esc(x.text)}</span>${full ? `<button type="button" class="ib del" data-act="sub-del" data-id="${t.id}" data-sub="${x.id}" title="删除">${ICON.x}</button>` : ''}</label>`).join('');
+  return `<div class="subs${full ? ' full' : ''}">${rows}${subs.length > max ? `<div class="sub-more" data-act="task-open" data-id="${t.id}">还有 ${subs.length - max} 项…</div>` : ''}</div>`;
+}
+const subTag = t => t.subs?.length ? `<span class="tag ${t.subs.every(x => x.done) ? 'green' : ''}">☑ ${t.subs.filter(x => x.done).length}/${t.subs.length}</span>` : '';
+// 改了子任务后，详情窗口开着就原地刷新（保持滚动位置和输入行）
+function setSubs(t, subs) {
+  patch(t, { subs });
+  if (!dlg.open || !$('#subForm')) return;
+  const top = dlg.scrollTop, adding = !$('#subForm').hidden;
+  openTaskDetail(t);
+  dlg.scrollTop = top;
+  if (adding) { $('#subForm').hidden = false; $('#subForm input').focus(); }
+}
 function openTaskDetail(t) {
   const [title, ...rest] = t.text.split('\n');
   const desc = rest.join('\n').trim();
@@ -1311,6 +1329,8 @@ function openTaskDetail(t) {
     </div>
     <div class="d-body">
     ${sec('描述', desc && `<div class="md">${renderMd(desc)}</div>`)}
+    <div class="d-sec"><h4><i></i>子任务${t.subs?.length ? `<span class="h4-n">${t.subs.filter(x => x.done).length}/${t.subs.length}</span>` : ''}<button class="h4-btn" data-act="sub-new" data-id="${t.id}">${ICON.plus}添加</button></h4>
+      ${subList(t, Infinity, true)}<form class="d-add" id="subForm" data-id="${t.id}" autocomplete="off" hidden>${ICON.plus}<input name="text" placeholder="子任务内容，回车添加，Esc 取消"></form></div>
     ${sec('备注', t.note?.trim() && `<div class="md">${renderMd(t.note.trim())}</div>`)}
     ${sec('产出文档', docList(t.docs))}
     ${sec('关联', [meeting && `<div class="d-todo" data-act="meet-open" data-id="${meeting.id}"><span class="d-todo-text">会议：${esc(meeting.title)}</span>${ICON.arrow}</div>`,
@@ -1760,6 +1780,8 @@ document.addEventListener('click', e => {
     case 'meet-del': removeMeeting(findMeet(id)); break;
     case 'meet-todo-new': { const f = $('#meetTodoForm'); f.hidden = false; $('input', f).focus(); break; }
     case 'task-doc-add': addOutputDoc(findTask(id)); break;
+    case 'sub-new': { const f = $('#subForm'); f.hidden = false; $('input', f).focus(); break; }
+    case 'sub-del': { e.preventDefault(); const t = findTask(id); setSubs(t, t.subs.filter(x => x.id !== el.dataset.sub)); break; }
     case 'doc-view': openLocalDoc(el.dataset.path); break;
     case 'doc-clear': Object.assign(ui, { dq: '', dKind: 'all' }); saveUi(); render(); break;
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
@@ -1789,6 +1811,10 @@ document.addEventListener('pointerup', () => {
 
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.dataset.act === 'sub-toggle') {
+    const t = findTask(el.dataset.id);
+    return setSubs(t, (t.subs || []).map(x => x.id === el.dataset.sub ? { ...x, done: el.checked } : x));
+  }
   if (['mProject', 'mType', 'mFrom', 'mTo', 'dKind'].includes(el.id)) { ui[el.id] = el.value; saveUi(); render(); }
 });
 
@@ -1816,6 +1842,13 @@ document.addEventListener('submit', e => {
     $('#taskInput').focus();
   }
   // 会议详情里手动新建「我的待办」：挂到该会议，创建时间为会议结束时间
+  if (f.id === 'subForm') {
+    e.preventDefault();
+    const t = findTask(f.dataset.id), text = f.text.value.trim();
+    if (!t || !text) return;
+    setSubs(t, [...(t.subs || []), { id: uid(), text, done: false }]);
+    return;
+  }
   if (f.id === 'meetTodoForm') {
     e.preventDefault();
     const m = findMeet(f.dataset.id), raw = f.text.value.trim();
@@ -1857,6 +1890,7 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('keydown', e => {
   // 会议详情里新建待办时，Esc 只收起输入行，不关整个窗口
+  if (e.key === 'Escape' && e.target.closest?.('#subForm')) { e.preventDefault(); e.target.value = ''; e.target.form.hidden = true; return; }
   if (e.key === 'Escape' && e.target.closest?.('#meetTodoForm')) { e.preventDefault(); e.target.value = ''; e.target.form.hidden = true; return; }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || dlg.open;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); if (!dlg.open) openSearch(); return; }
