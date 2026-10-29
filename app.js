@@ -275,12 +275,6 @@ async function listDir(dir) {
   const j = await r.json();
   return new Set(Array.isArray(j) ? j.map(x => x.name) : []);
 }
-// 同名时加编号：解绑流程方案.md → 解绑流程方案-2.md
-function freeName(name, taken) {
-  if (!taken.has(name)) return { name, n: 1 };
-  const dot = name.lastIndexOf('.'), stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
-  for (let n = 2; ; n++) if (!taken.has(`${stem}-${n}${ext}`)) return { name: `${stem}-${n}${ext}`, n };
-}
 const localPick = { files: [], st: null, nameTouched: false };
 function wireLocalPick(t) {
   Object.assign(localPick, { files: [], st: null, nameTouched: false });
@@ -317,13 +311,14 @@ async function addPicked(t, list) {
   const dir = `docs/${safeSeg(firstLine(t.text))}`;
   let taken;
   try { taken = await listDir(dir); } catch (e) { notes.innerHTML = `<div class="img-miss">${ICON.x}<div><b>读取数据仓库失败</b><span>${esc(e.message)}</span></div></div>`; return; }
-  const save = freeName(baseOf(md.rel), taken);
+  // 同一个任务里同名的文件直接覆盖（旧版本留在 GitHub 的文件历史里）
+  const save = { name: baseOf(md.rel), exists: taken.has(baseOf(md.rel)) };
   localPick.st = { dir, text, imgs: found, save };
   notes.innerHTML = (missing.length ? `<div class="img-miss">${ICON.x}<div><b>缺 ${missing.length} 张图片：${missing.map(i => esc(decodeRef(i.ref))).join('、')}</b><span>把它拖到上面的框里补上；不补也能上传，缺的图会显示为缺图</span></div></div>` : '')
-    + (save.n > 1 ? `<p class="hint">这个任务里已有同名文件，这次保存为「${esc(save.name)}」。</p>` : '');
+    + (save.exists ? `<p class="hint">这个任务里已有同名文件，上传后会覆盖它；旧版本可以在 GitHub 的文件历史里找回。</p>` : '');
   const name = $('#dlg [name=docName]');
   if (!localPick.nameTouched) {
-    name.value = (heading || baseOf(md.rel).replace(LOCAL_EXT, '')) + (save.n > 1 ? `（${save.n}）` : '');
+    name.value = heading || baseOf(md.rel).replace(LOCAL_EXT, '');
     name.dispatchEvent(new Event('input', { bubbles: true }));
   }
 }
@@ -333,17 +328,18 @@ async function uploadLocal(t) {
   const btn = $('#docAddBtn');
   btn.disabled = true; btn.textContent = '上传中…';
   try {
+    // 已有同名文件时带上它的 sha 覆盖
     const put = async (path, content) => {
-      const r = await gh('PUT', { message: `workbench: 上传 ${path}`, content, branch: cfg().branch || 'main' }, path);
+      const cur = await gh('GET', null, path);
+      const sha = cur.ok ? (await cur.json()).sha : undefined;
+      const r = await gh('PUT', { message: `workbench: ${sha ? '更新' : '上传'} ${path}`, content, branch: cfg().branch || 'main', ...(sha ? { sha } : {}) }, path);
       if (!r.ok) throw new Error(await ghError(r));
     };
     // 图片先传，传好后把 md 里的引用改成 assets/新文件名
     let text = st.text;
     if (st.imgs.length) {
-      const taken = await listDir(`${st.dir}/assets`);
       for (const img of st.imgs) {
-        const { name } = freeName(img.file.name, taken);
-        taken.add(name);
+        const name = img.file.name;
         await put(`${st.dir}/assets/${name}`, await fileB64(img.file));
         const to = 'assets/' + encodeURI(name), re = img.ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         text = text.replace(new RegExp(`(\\]\\(\\s*<?)${re}(?=[\\s>)])`, 'g'), `$1${to}`).replace(new RegExp(`(src=["'])${re}(?=["'])`, 'g'), `$1${to}`);
@@ -353,9 +349,11 @@ async function uploadLocal(t) {
     await put(path, b64enc(text));
     const c = cfg(), kind = $('#dlg [name=docKind]').value, name = $('#dlg [name=docName]').value.trim() || st.save.name.replace(LOCAL_EXT, '');
     const url = `https://github.com/${c.owner}/${c.repo}/blob/${encodeURIComponent(c.branch || 'main')}/${path.split('/').map(encodeURIComponent).join('/')}`;
-    patch(t, { docs: [...(t.docs || []), { kind, name, url, path, at: now() }] });
+    // 覆盖时更新原来那条产出文档，不再新增
+    const doc = { kind, name, url, path, at: now() }, had = (t.docs || []).some(d => d.path === path);
+    patch(t, { docs: had ? t.docs.map(d => (d.path === path ? doc : d)) : [...(t.docs || []), doc] });
     dlg.close();
-    toast('已上传并添加产出文档');
+    toast(had ? '已覆盖更新产出文档' : '已上传并添加产出文档');
   } catch (e) {
     btn.disabled = false; btn.textContent = '上传并添加';
     toast('上传失败：' + e.message);
@@ -1470,7 +1468,7 @@ function readMeeting(f) {
 }
 
 // 其他文档：每行 类型 + 文档名 + 链接
-const docRow = (doc = {}) => `<div class="doc-row">
+const docRow = (doc = {}) => `<div class="doc-row"${doc.path ? ` data-path="${esc(doc.path)}" data-at="${doc.at || ''}" data-url="${esc(doc.url)}"` : ''}>
   <select class="field" name="docKind" data-touched="${doc.kind ? 1 : ''}">${DOC_KINDS.map(d => `<option value="${d.k}" title="${d.label}" ${docKind(doc.kind).k === d.k ? 'selected' : ''}>${d.tag || '其他'}</option>`).join('')}</select>
   <input class="field" name="docName" value="${esc(doc.name)}" placeholder="文档名">
   <input class="field" name="docUrl" type="url" value="${esc(doc.url)}" placeholder="粘贴飞书链接">
@@ -1481,7 +1479,9 @@ function readDocs(form, fallbackName = '') {
     const raw = $('[name=docName]', row).value.trim(), tagged = splitDocName(raw);
     const kind = tagged?.kind || $('[name=docKind]', row).value, url = safeLink($('[name=docUrl]', row).value);
     const name = (tagged ? tagged.name : raw) || fallbackName || docKind(kind).tag || '文档';
-    return url ? { kind, name, url } : null;
+    // 本地文件（链接没改时）保留存储位置和上传时间，否则会变成普通链接、没法在工作台里查看
+    const local = row.dataset.path && url === row.dataset.url ? { path: row.dataset.path, ...(row.dataset.at ? { at: +row.dataset.at } : {}) } : {};
+    return url ? { kind, name, url, ...local } : null;
   }).filter(Boolean);
 }
 
