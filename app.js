@@ -532,19 +532,21 @@ function newNextTask(t) {
   openDialog(`<form>
     <h3>新建关联任务</h3>
     <p class="hint">上一步：${esc(firstLine(t.text))}</p>
-    <label>下一步要做什么<textarea class="field" name="text" required placeholder="例如：同步信息到群里"></textarea></label>
+    <label>下一步<textarea class="field" name="text" required placeholder="标题：备注，例如「同步评审结论：发到项目群」"></textarea></label>
+    <label>备注<input class="field" name="note" placeholder="可选"></label>
     <div class="grid2">
       <label>项目<select class="field" name="project">${projectOptions(t.project)}</select></label>
       <label>截止时间（可不填）${dueFields()}</label>
     </div>
-    <label>备注<input class="field" name="note" placeholder="可选"></label>
-    <label class="inline-check"><input type="checkbox" name="finish">同时把上一步标记为完成</label>
+    ${t.status === 'done' ? '' : '<label class="inline-check"><input type="checkbox" name="finish">同时把上一步标记为完成</label>'}
     <div class="acts">
       <button type="button" class="btn" data-close>取消</button>
       <button class="btn primary">创建</button>
     </div>
   </form>`, f => {
-    const next = addTask(f.get('text'), { project: f.get('project'), due: readDue(f), note: f.get('note') || '', parent: t.id });
+    // 「标题：备注」拆开；备注框也填了时两段都留
+    const { title, detail } = splitTodo(f.get('text').trim()), note = [detail, (f.get('note') || '').trim()].filter(Boolean).join('\n');
+    const next = addTask(title, { project: f.get('project'), due: readDue(f), note, parent: t.id });
     if (!next) return false;
     if (f.get('finish')) setStatus(t, 'done');
     setTimeout(() => flashTask(next.id));
@@ -653,6 +655,7 @@ function viewBoard() {
           </div>
           <div class="card-foot">
             <button class="reopen-btn" data-act="task-reopen" data-id="${t.id}">重新打开</button>
+            <button class="icon-btn go" data-act="task-next" data-id="${t.id}" title="新建关联任务（下一步）">${ICON.arrow}</button>
             <button class="icon-btn" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button>
           </div>
         </div>`;
