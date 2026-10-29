@@ -1257,7 +1257,7 @@ async function autoImport(manual = false) {
 const runImport = manual => autoImport(manual).then(() => flushWrites()).catch(e => toast('导入纪要失败：' + (e.message || e)));
 
 /* ----- 写回本地纪要 ----- */
-// 网页上改了从纪要导入的会议（含编辑会议里改【我的待办】；看板上改待办、会议里「＋ 新建」的待办不算），把改动写回那个 .md：
+// 网页上改了从纪要导入的会议（含编辑会议里改【我的待办】、会议里「＋ 新建」待办；看板上改待办不算），把改动写回那个 .md：
 // 只替换改过的【标签】段，其他内容和格式不动。每个文件记下上次同步时的文件修改时间（mod）和会议的 u，
 // 会议 u 更新了才写；写之前文件的修改时间变了 = 本地也改过，让用户选保留哪边
 const LS_FSYNC = 'wb.fsync';
@@ -2090,10 +2090,11 @@ document.addEventListener('submit', e => {
     e.preventDefault();
     const m = findMeet(f.dataset.id), raw = f.text.value.trim();
     if (!m || !raw) return;
-    // 只挂在这场会议下，不写进【我的待办】（那是本地纪要的内容；写进去下次导入会被当成删掉的行）
+    // 和纪要里写的待办一样：追加到【我的待办】（从本地导入的会议会写回 .md），以后在纪要里改这行也同步
     const { title, detail } = splitTodo(raw);
     const t = addTask(joinTask(title, detail), { project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
-    t.manual = true;
+    t.todo = raw;
+    Object.assign(m, { myTodos: [...todoLines(m.myTodos), raw].join('\n'), u: now() });
     commit();
     openMeetingDetail(m);
     return;
