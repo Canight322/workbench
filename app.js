@@ -191,22 +191,195 @@ function setStatus(t, status) {
   patch(t, f);
 }
 function completeTask(t) { setStatus(t, 'done'); toast('已完成 🎉'); }
-// 进行中卡片上的 📄+：只用来添加产出文档；文档名不填时用粘贴带出的标题，再没有就用任务名
-function addOutputDoc(t) {
+// 进行中卡片上的 📄+：只用来添加产出文档，可以是飞书链接，也可以是本地文件（上传到数据仓库）
+function addOutputDoc(t, mode = 'link') {
+  const row = docRow({}).replace(/^<div class="doc-row">|<button type="button" class="ib del"[\s\S]*$/g, '');
+  const local = mode === 'local';
   openDialog(`<form>
     <h3>添加产出文档</h3>
     <p class="hint">${esc(firstLine(t.text))}</p>
-    <div class="doc-row">${docRow({}).replace(/^<div class="doc-row">|<button type="button" class="ib del"[\s\S]*$/g, '')}</div>
-    <p class="hint">文档名不填时用任务名，之后可在 ✎ 里改。</p>
-    <div class="acts"><button type="button" class="btn" data-close>取消</button><button class="btn primary">添加</button></div>
+    <div class="seg src-seg"><button type="button" class="${local ? '' : 'active'}" data-mode="link">飞书链接</button><button type="button" class="${local ? 'active' : ''}" data-mode="local">本地文件</button></div>
+    ${local ? `
+    <label class="md-drop" id="mdDrop"><input type="file" multiple hidden>
+      <span class="md-drop-icon">${ICON.doc}</span>
+      <span class="md-drop-main" id="mdPicked">拖入文件或文件夹，或点击选择</span>
+      <span class="md-drop-sub" id="mdPickedSub">目前支持 .md；引用了本地图片时，把图片一起选上（或直接拖整个文件夹）</span></label>
+    <div id="mdNotes"></div>
+    <div class="doc-row md-meta">${row.replace(/<input class="field" name="docUrl"[^>]*>/, '')}</div>
+    <p class="hint">文档名默认取文件里的第一个标题，没有标题时用文件名。</p>` : `
+    <div class="doc-row">${row}</div>
+    <p class="hint">文档名不填时用任务名，之后可在 ✎ 里改。</p>`}
+    <div class="acts"><button type="button" class="btn" data-close>取消</button><button class="btn primary" id="docAddBtn">${local ? '上传并添加' : '添加'}</button></div>
   </form>`, () => {
+    if (local) { uploadLocal(t); return false; }
     const doc = readDocs($('#dlg form'), firstLine(t.text))[0];
     if (!doc) { toast('请粘贴 http 开头的链接'); return false; }
     patch(t, { docs: [...(t.docs || []), { ...doc, at: now() }] });
     toast('已添加产出文档');
   });
+  $$('#dlg .src-seg button').forEach(b => b.onclick = () => addOutputDoc(t, b.dataset.mode));
   wireDocs($('#dlg form'));
-  $('#dlg [name=docUrl]').focus();
+  if (local) wireLocalPick(t); else $('#dlg [name=docUrl]').focus();
+}
+
+/* ----- 本地文件（产出文档） ----- */
+// 存到数据仓库 docs/<任务名>/，图片放同目录 assets/，md 里的图片路径改成 assets/…；目前只支持 .md
+const LOCAL_MAX = 30 * 1024 * 1024;
+const LOCAL_EXT = /\.md$/i, IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
+const safeSeg = s => (s || '').replace(/[\\/:*?"<>|#%\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) || '未命名';
+const dirOf = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+const baseOf = p => p.slice(p.lastIndexOf('/') + 1);
+function joinPath(dir, rel) {
+  const out = dir ? dir.split('/') : [];
+  for (const seg of rel.split('/')) { if (!seg || seg === '.') continue; if (seg === '..') out.pop(); else out.push(seg); }
+  return out.join('/');
+}
+const decodeRef = r => { try { return decodeURI(r); } catch { return r; } };
+// md 里引用的本地图片：![](…) 和 <img src="…">，跳过网络图片
+function mdImageRefs(md) {
+  const refs = new Set();
+  for (const m of md.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g)) refs.add(m[1]);
+  for (const m of md.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)) refs.add(m[1]);
+  return [...refs].filter(r => !/^[a-z][a-z0-9+.-]*:/i.test(r));
+}
+async function fileB64(f) {
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+// 拖进来的文件夹：递归读出全部文件，带上相对路径
+async function droppedFiles(dt) {
+  const out = [], entries = [...dt.items].map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return [...dt.files].map(f => ({ file: f, rel: f.name }));
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) { const f = await new Promise((ok, no) => entry.file(ok, no)); out.push({ file: f, rel: prefix + f.name }); return; }
+    const reader = entry.createReader();
+    for (let batch; (batch = await new Promise((ok, no) => reader.readEntries(ok, no))).length;) for (const e of batch) await walk(e, prefix + entry.name + '/');
+  };
+  for (const e of entries) await walk(e, '');
+  return out;
+}
+async function listDir(dir) {
+  const r = await gh('GET', null, dir);
+  if (r.status === 404) return new Set();
+  if (!r.ok) throw new Error(await ghError(r));
+  const j = await r.json();
+  return new Set(Array.isArray(j) ? j.map(x => x.name) : []);
+}
+// 同名时加编号：解绑流程方案.md → 解绑流程方案-2.md
+function freeName(name, taken) {
+  if (!taken.has(name)) return { name, n: 1 };
+  const dot = name.lastIndexOf('.'), stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 2; ; n++) if (!taken.has(`${stem}-${n}${ext}`)) return { name: `${stem}-${n}${ext}`, n };
+}
+const localPick = { files: [], st: null, nameTouched: false };
+function wireLocalPick(t) {
+  Object.assign(localPick, { files: [], st: null, nameTouched: false });
+  const drop = $('#mdDrop'), inp = $('input[type=file]', drop);
+  inp.onchange = () => { addPicked(t, [...inp.files].map(f => ({ file: f, rel: f.webkitRelativePath || f.name }))); inp.value = ''; };
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', async e => { e.preventDefault(); drop.classList.remove('over'); addPicked(t, await droppedFiles(e.dataTransfer)); });
+  $('#dlg [name=docName]').addEventListener('input', e => { if (e.isTrusted) localPick.nameTouched = true; });
+}
+// 每次拖入 / 选择都累加（缺图时可以再拖进来补上），然后重新检查
+async function addPicked(t, list) {
+  for (const x of list) if (!localPick.files.some(y => y.rel === x.rel)) localPick.files.push(x);
+  const main = $('#mdPicked'), sub = $('#mdPickedSub'), notes = $('#mdNotes'), drop = $('#mdDrop');
+  const md = localPick.files.find(x => LOCAL_EXT.test(x.rel));
+  localPick.st = null;
+  if (!md) { drop.classList.remove('picked'); notes.innerHTML = `<div class="img-miss">${ICON.x}<div><b>目前只支持 .md 文件</b><span>其他格式以后按需要再支持</span></div></div>`; return; }
+  const text = await md.file.text();
+  const heading = (text.match(/^#{1,6}\s+(.+)$/m) || [])[1]?.trim() || '';
+  const refs = mdImageRefs(text), mdDir = dirOf(md.rel);
+  // 先按相对路径找，找不到再按文件名找（只选了文件、没拖文件夹时没有路径）
+  const imgs = refs.map(ref => {
+    const want = joinPath(mdDir, decodeRef(ref));
+    const hit = localPick.files.find(x => x.rel === want) || localPick.files.find(x => IMG_EXT.test(x.rel) && baseOf(x.rel) === baseOf(want));
+    return { ref, file: hit?.file || null };
+  });
+  const missing = imgs.filter(i => !i.file), found = imgs.filter(i => i.file);
+  const size = md.file.size + found.reduce((n, i) => n + i.file.size, 0);
+  drop.classList.add('picked');
+  main.textContent = baseOf(md.rel);
+  sub.textContent = [`${(md.file.size / 1024).toFixed(1)} KB`, heading && `读到标题「${heading}」`, !missing.length && found.length && `含 ${found.length} 张图片`].filter(Boolean).join(' · ');
+  if (size > LOCAL_MAX) { notes.innerHTML = `<div class="img-miss">${ICON.x}<div><b>文件太大：${(size / 1048576).toFixed(1)} MB</b><span>.md 加图片合计不能超过 30 MB</span></div></div>`; return; }
+  if (!cfgReady()) { notes.innerHTML = `<div class="img-miss">${ICON.x}<div><b>还没有连接 GitHub</b><span>本地文件要存到数据仓库，请先点右上角「连接 GitHub」</span></div></div>`; return; }
+  const dir = `docs/${safeSeg(firstLine(t.text))}`;
+  let taken;
+  try { taken = await listDir(dir); } catch (e) { notes.innerHTML = `<div class="img-miss">${ICON.x}<div><b>读取数据仓库失败</b><span>${esc(e.message)}</span></div></div>`; return; }
+  const save = freeName(baseOf(md.rel), taken);
+  localPick.st = { dir, text, imgs: found, save };
+  notes.innerHTML = (missing.length ? `<div class="img-miss">${ICON.x}<div><b>缺 ${missing.length} 张图片：${missing.map(i => esc(decodeRef(i.ref))).join('、')}</b><span>把它拖到上面的框里补上；不补也能上传，缺的图会显示为缺图</span></div></div>` : '')
+    + (save.n > 1 ? `<p class="hint">这个任务里已有同名文件，这次保存为「${esc(save.name)}」。</p>` : '');
+  const name = $('#dlg [name=docName]');
+  if (!localPick.nameTouched) {
+    name.value = (heading || baseOf(md.rel).replace(LOCAL_EXT, '')) + (save.n > 1 ? `（${save.n}）` : '');
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+async function uploadLocal(t) {
+  const st = localPick.st;
+  if (!st) { toast(localPick.files.length ? '这个文件还不能上传，看一下上面的提示' : '请先选择或拖入 .md 文件'); return; }
+  const btn = $('#docAddBtn');
+  btn.disabled = true; btn.textContent = '上传中…';
+  try {
+    const put = async (path, content) => {
+      const r = await gh('PUT', { message: `workbench: 上传 ${path}`, content, branch: cfg().branch || 'main' }, path);
+      if (!r.ok) throw new Error(await ghError(r));
+    };
+    // 图片先传，传好后把 md 里的引用改成 assets/新文件名
+    let text = st.text;
+    if (st.imgs.length) {
+      const taken = await listDir(`${st.dir}/assets`);
+      for (const img of st.imgs) {
+        const { name } = freeName(img.file.name, taken);
+        taken.add(name);
+        await put(`${st.dir}/assets/${name}`, await fileB64(img.file));
+        const to = 'assets/' + encodeURI(name), re = img.ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp(`(\\]\\(\\s*<?)${re}(?=[\\s>)])`, 'g'), `$1${to}`).replace(new RegExp(`(src=["'])${re}(?=["'])`, 'g'), `$1${to}`);
+      }
+    }
+    const path = `${st.dir}/${st.save.name}`;
+    await put(path, b64enc(text));
+    const c = cfg(), kind = $('#dlg [name=docKind]').value, name = $('#dlg [name=docName]').value.trim() || st.save.name.replace(LOCAL_EXT, '');
+    const url = `https://github.com/${c.owner}/${c.repo}/blob/${encodeURIComponent(c.branch || 'main')}/${path.split('/').map(encodeURIComponent).join('/')}`;
+    patch(t, { docs: [...(t.docs || []), { kind, name, url, path, at: now() }] });
+    dlg.close();
+    toast('已上传并添加产出文档');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '上传并添加';
+    toast('上传失败：' + e.message);
+  }
+}
+// 在工作台里查看本地文件：从数据仓库读出 md 排版显示，图片用同一个 Token 读出来再显示
+async function openLocalDoc(path) {
+  const owner = db.tasks.find(t => (t.docs || []).some(d => d.path === path));
+  const doc = owner?.docs.find(d => d.path === path) || { path, name: baseOf(path), url: '' };
+  const k = docKind(doc.kind);
+  openDialog(`<div class="detail" tabindex="-1" autofocus>
+    <div class="d-head">
+      <div class="d-main"><div class="d-title">${esc(doc.name)}</div>
+        <div class="d-sub"><span class="tag">${esc(k.tag || '文档')}</span><span class="d-when">本地文件 · ${esc(path)}${doc.at ? ' · 上传于 ' + esc(shortTime(doc.at)) : ''}</span></div></div>
+      ${doc.url ? `<div class="meet-acts"><a class="btn sm gh-link" href="${esc(doc.url)}" target="_blank" rel="noopener" title="在 GitHub 上打开（需要登录 GitHub）">在 GitHub 查看${ICON.jump}</a></div>` : ''}
+    </div>
+    <div class="d-body"><div class="d-sec"><div class="md" id="localMd"><p class="d-empty">读取中…</p></div></div></div>
+  </div>`, null, 'detail-dlg');
+  dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
+  const box = $('#localMd');
+  try {
+    if (!cfgReady()) throw new Error('还没有连接 GitHub');
+    const r = await gh('GET', null, path, true);
+    if (!r.ok) throw new Error(await ghError(r));
+    // 第一个标题和窗口标题重复，正文里不再显示
+    box.innerHTML = renderMd((await r.text()).replace(/^\s*#\s+.+\n?/, '').replace(/^\s+/, ''));
+    for (const img of $$('img[data-src]', box)) {
+      const ir = await gh('GET', null, joinPath(dirOf(path), decodeRef(img.dataset.src)), true).catch(() => null);
+      if (ir?.ok) img.src = URL.createObjectURL(await ir.blob());
+      else img.replaceWith(Object.assign(document.createElement('span'), { className: 'img-lost', textContent: `〔缺图：${img.alt || baseOf(img.dataset.src)}〕` }));
+    }
+  } catch (e) { box.innerHTML = `<p class="d-empty">读取失败：${esc(e.message)}</p>`; }
 }
 function removeTask(t) {
   const log = t.log;
@@ -748,8 +921,10 @@ const meetDocBtn = (url, icon, title, cls = '') =>
 const kindOrder = d => DOC_KINDS.indexOf(docKind(d.kind));
 // 一排文档按钮（会议卡片、任务卡片、文档页共用）；sm 为任务卡片上的小号
 const docBtn = (doc, sm = '') => {
-  const k = docKind(doc.kind);
-  return k.tag && !k.jump ? meetDocBtn(doc.url, esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag' + sm) : meetDocBtn(doc.url, ICON.jump, doc.name || k.tag || '文档', sm);
+  const k = docKind(doc.kind), tagged = k.tag && !k.jump;
+  const [icon, title, cls] = tagged ? [esc(k.tag), `${k.label}：${doc.name || ''}`, ' doc-tag' + sm] : [ICON.jump, doc.name || k.tag || '文档', sm];
+  // 本地文件（存在数据仓库里）点开在工作台里查看
+  return doc.path ? `<button type="button" class="doc-btn${cls}" data-act="doc-view" data-path="${esc(doc.path)}" title="${esc(title)}（本地文件）">${icon}</button>` : meetDocBtn(doc.url, icon, title, cls);
 };
 const docBtns = (docs, sm = '') => [...(docs || [])].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d => docBtn(d, sm)).join('');
 // 一行文档：「文档名 | 链接」「[文档名](链接)」或只有链接；label 是所在标签对应的类型
@@ -806,7 +981,10 @@ function openMeetingDetail(m) {
 
 // 轻量 Markdown：列表（1. / 1.1 / -）悬挂缩进，层级按缩进排名；有下级的条目、冒号前的短标签加粗；支持 **粗体**、`代码`、# 小标题
 function mdInline(s, boldLabel) {
-  let h = esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 图片：网络图片直接显示，相对路径记在 data-src，由查看窗口读出来再显示
+  let h = esc(s).replace(/!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\s*\)/g, (_, alt, src) =>
+    /^https?:\/\//i.test(src) ? `<img alt="${alt}" src="${src}">` : /^[a-z][a-z0-9+.-]*:/i.test(src) ? '' : `<img alt="${alt}" data-src="${src}">`)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
   if (boldLabel) h = h.replace(/^([^：:<>。，,]{1,18}?)([：:])(?=\s*\S)/, '<b>$1$2</b>');
   return h;
 }
@@ -830,7 +1008,8 @@ function renderMd(src) {
     if (it.kind === 'p') return `<div class="md-p" style="--lv:${lv(it)}">${mdInline(it.text, true)}</div>`;
     const next = items.slice(k + 1).find(n => n.kind === 'li' || n.kind === 'p');
     const group = next && lv(next) > lv(it);
-    return `<div class="md-li${it.bullet ? ' bullet' : ''}${group ? ' group' : ''}" style="--lv:${lv(it)}"><span class="md-mk">${it.marker}</span><span>${mdInline(it.text, true)}</span></div>`;
+    const labeled = /^[^：:<>。，,]{1,18}?[：:]\s*\S/.test(it.text);
+    return `<div class="md-li${it.bullet ? ' bullet' : ''}${group ? ' group' : ''}${labeled ? ' labeled' : ''}" style="--lv:${lv(it)}"><span class="md-mk">${it.marker}</span><span>${mdInline(it.text, true)}</span></div>`;
   }).join('');
 }
 
@@ -1103,7 +1282,8 @@ const attachList = docs => [...(docs || [])].sort((a, b) => kindOrder(a) - kindO
 // 详情窗口里的文档列表：类型 + 文档名，点击打开
 const docList = docs => (docs || []).length ? [...docs].sort((a, b) => kindOrder(a) - kindOrder(b)).map(d => {
   const k = docKind(d.kind);
-  return `<a class="d-todo d-doc" href="${esc(d.url)}" target="_blank" rel="noopener"><span class="tag">${esc(k.tag || '文档')}</span><span class="d-todo-text">${esc(d.name || k.tag || '文档')}</span>${ICON.jump}</a>`;
+  const inner = `<span class="tag">${esc(k.tag || '文档')}</span><span class="d-todo-text">${esc(d.name || k.tag || '文档')}</span>${ICON.jump}`;
+  return d.path ? `<div class="d-todo d-doc" data-act="doc-view" data-path="${esc(d.path)}">${inner}</div>` : `<a class="d-todo d-doc" href="${esc(d.url)}" target="_blank" rel="noopener">${inner}</a>`;
 }).join('') : '';
 // 任务详情：只读，点窗口外关闭；点 ✎ 才进入编辑（删除在编辑窗口里）
 function openTaskDetail(t) {
@@ -1426,14 +1606,15 @@ function merge(a, b) {
 }
 const canon = d => JSON.stringify(COLLECTIONS.map(k => [...(d[k] || [])].sort((x, y) => (x.id < y.id ? -1 : 1))));
 
-async function gh(method, body) {
+// filePath 默认是数据文件；读 docs/ 下的本地文件时传 raw，拿原始内容（超过 1MB 的文件也能读）
+async function gh(method, body, filePath = cfg().path, raw = false) {
   const c = cfg();
-  const path = c.path.split('/').map(encodeURIComponent).join('/');
+  const path = filePath.split('/').map(encodeURIComponent).join('/');
   const url = `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}`
     + (method === 'GET' ? `?ref=${encodeURIComponent(c.branch || 'main')}` : '');
   return fetch(url, {
     method, cache: 'no-store',
-    headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+    headers: { Authorization: `Bearer ${c.token}`, Accept: raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
     body: body && JSON.stringify(body),
   });
 }
@@ -1568,6 +1749,7 @@ document.addEventListener('click', e => {
     case 'meet-del': removeMeeting(findMeet(id)); break;
     case 'meet-todo-new': { const f = $('#meetTodoForm'); f.hidden = false; $('input', f).focus(); break; }
     case 'task-doc-add': addOutputDoc(findTask(id)); break;
+    case 'doc-view': openLocalDoc(el.dataset.path); break;
     case 'doc-clear': Object.assign(ui, { dq: '', dKind: 'all' }); saveUi(); render(); break;
     case 'meet-clear': Object.assign(ui, { mq: '', mProject: 'all', mType: 'all', mFrom: '', mTo: '' }); saveUi(); render(); break;
   }
