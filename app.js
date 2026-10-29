@@ -202,7 +202,7 @@ function addOutputDoc(t, mode = 'link') {
     ${local ? `
     <label class="md-drop" id="mdDrop"><input type="file" multiple hidden>
       <span class="md-drop-icon">${ICON.doc}</span>
-      <span class="md-drop-main" id="mdPicked">拖入文件或文件夹，或点击选择</span>
+      <span class="md-drop-main" id="mdPicked">拖入、粘贴（⌘V）或点击选择文件</span>
       <span class="md-drop-sub" id="mdPickedSub">目前支持 .md；引用了本地图片时，把图片一起选上（或直接拖整个文件夹）</span></label>
     <div id="mdNotes"></div>
     <div class="doc-row md-meta">${row.replace(/<input class="field" name="docUrl"[^>]*>/, '')}</div>
@@ -220,6 +220,14 @@ function addOutputDoc(t, mode = 'link') {
   $$('#dlg .src-seg button').forEach(b => b.onclick = () => addOutputDoc(t, b.dataset.mode));
   wireDocs($('#dlg form'));
   if (local) wireLocalPick(t); else $('#dlg [name=docUrl]').focus();
+  // ⌘V 粘贴文件（如在访达里复制的 .md 和图片）：在「飞书链接」下也会自动切到「本地文件」；粘贴文字照常进输入框
+  dlg.onpaste = e => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    if (!local) addOutputDoc(t, 'local');
+    addPicked(t, files.map(f => ({ file: f, rel: f.name })));
+  };
 }
 
 /* ----- 本地文件（产出文档） ----- */
@@ -1266,7 +1274,7 @@ function importBtn() {
 const dlg = $('#dlg');
 function openDialog(html, onSubmit, cls = '') {
   if (dlg.open) dlg.close();
-  dlg.onclick = null;
+  dlg.onclick = null; dlg.onpaste = null;
   dlg.className = 'dlg ' + cls;
   dlg.innerHTML = html;
   const form = $('form', dlg);
