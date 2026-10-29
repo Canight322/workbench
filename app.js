@@ -138,6 +138,7 @@ function commit() {
   store(LS_DATA, db);
   render();
   scheduleSync();
+  scheduleWrites();
 }
 function patch(obj, fields) { Object.assign(obj, fields, { u: now() }); commit(); }
 
@@ -835,7 +836,7 @@ function nowSlot() {
 function meetingFields(m = {}, inDialog = false) {
   const [d, s, e] = nowSlot();
   return `
-    <label><span>会议纪要链接 <span class="req">*</span></span><input class="field" type="url" name="link" value="${esc(m.link)}" placeholder="https://xxx.feishu.cn/docx/…"${inDialog ? ' required' : ''}></label>
+    <label><span>会议纪要链接 <span class="hint-inline">选填</span></span><input class="field" type="url" name="link" value="${esc(m.link)}" placeholder="https://xxx.feishu.cn/docx/…"></label>
     <div class="grid3">
       <label>日期<input class="field" type="date" name="date" value="${esc(m.date || d)}" required></label>
       <label>开始<input class="field" type="time" name="start" value="${esc(m.start ?? s)}"></label>
@@ -1137,20 +1138,17 @@ function parseMinutes(text, fileName) {
 
 // 自动检查只读新建 / 修改过的文件；手动点按钮时全部重读（内容没变的不会重复导入）
 async function importMinutes(files, all = false) {
-  const seen = load(LS_IMPORT, {});
+  const seen = load(LS_IMPORT, {}), fsync = load(LS_FSYNC, {});
   const res = { added: [], updated: [], todos: 0, todoChanged: 0, todoRemoved: 0, bad: [], files: [] };
   const note = (name, st, msg = '') => res.files.push({ name, st, msg });
   for (const file of files) {
     if (!/\.md$/i.test(file.name) || (!all && seen[file.name] === file.lastModified)) continue;
     const { projectName, ...m } = parseMinutes(await file.text(), file.name);
     seen[file.name] = file.lastModified;  // 缺字段的文件改好后修改时间会变，到时再读
-    if (!m.title || !m.link) {
-      res.bad.push(file.name);
-      note(file.name, 'bad', `没有读到${[!m.title && '【会议名称】', !m.link && '【纪要链接】（需要 http 开头的链接）'].filter(Boolean).join('和')}`);
-      continue;
-    }
-    // 同一份纪要：先按纪要链接找，链接改过时按来源文件找；找到就用文档内容更新原记录
+    if (!m.title) { res.bad.push(file.name); note(file.name, 'bad', '没有读到【会议名称】'); continue; }
+    // 同一份纪要：先按纪要链接找（纪要链接选填），没有或改过时按来源文件找；找到就用文档内容更新原记录
     const old = findByLink(m.link) || db.meetings.find(x => !x.deletedAt && x.src === file.name);
+    const synced = rec => { fsync[file.name] = { mod: file.lastModified, u: rec.u }; };
     // 类型 / 项目：纪要里写的 > 网页上已设的 > 从会议名称、文件名里找到的；类型都没有时记为「其他」
     const guess = `${m.title} ${file.name}`, keepType = old?.type && old.type !== '其他' ? old.type : '';
     m.type = m.type || keepType || typeIn(guess) || '其他';
@@ -1163,19 +1161,22 @@ async function importMinutes(files, all = false) {
       res.todos += syncMyTodos(rec).n;
       res.added.push(rec.title);
       note(file.name, 'add', info(rec));
+      synced(rec);
       continue;
     }
     // 网页上补的文档也保留
     const next = { ...m, docs: mergeDocs(m.docs, old.docs) };
-    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); continue; }
+    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); synced(old); continue; }
     const prev = old.myTodos;
     Object.assign(old, next, { src: file.name, u: now() });
     const r = syncMyTodos(old, prev);
     res.todos += r.n; res.todoChanged += r.changed; res.todoRemoved += r.removed;
     res.updated.push(old.title);
     note(file.name, 'upd', info(old));
+    synced(old);
   }
   store(LS_IMPORT, seen);
+  store(LS_FSYNC, fsync);
   if (res.added.length || res.updated.length) commit();
   return res;
 }
@@ -1186,7 +1187,7 @@ function importReport(r, manual) {
   if (r.updated.length) parts.push(`已更新 ${r.updated.length} 场：${r.updated.join('、')}`);
   const tm = todoMsg({ n: r.todos, changed: r.todoChanged, removed: r.todoRemoved });
   if (tm) parts.push(tm);
-  if (r.bad.length) parts.push(`缺少会议名称或纪要链接：${r.bad.join('、')}`);
+  if (r.bad.length) parts.push(`缺少会议名称：${r.bad.join('、')}`);
   if (manual) return importResult(r);
   if (parts.length) toast(parts.join('；'));
 }
@@ -1200,7 +1201,7 @@ function importResult(r) {
       <td class="t" title="${esc(f.name)}">${esc(f.name)}${f.msg ? `<div class="hint">${esc(f.msg)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>`
       : '<p class="hint">文件夹里没有 .md 文件。纪要需要直接放在这个文件夹里，子文件夹不会读取。</p>'}
     ${r.todos || r.todoChanged || r.todoRemoved ? `<p class="hint">${todoMsg({ n: r.todos, changed: r.todoChanged, removed: r.todoRemoved })}。</p>` : ''}
-    ${r.bad.length ? '<p class="hint">未导入的文件请按模板补上【会议名称】和【纪要链接】，保存后会自动重新导入。</p>' : ''}
+    ${r.bad.length ? '<p class="hint">未导入的文件请按模板补上【会议名称】，保存后会自动重新导入。</p>' : ''}
     <div class="acts"><button class="btn primary">好的</button></div>
   </form>`, () => {});
 }
@@ -1244,14 +1245,142 @@ async function autoImport(manual = false) {
   try { importReport(await importMinutes(await dirFiles(imp.dir), manual), manual); }
   finally { imp.busy = false; }
 }
-const runImport = manual => autoImport(manual).catch(e => toast('导入纪要失败：' + (e.message || e)));
+const runImport = manual => autoImport(manual).then(() => flushWrites()).catch(e => toast('导入纪要失败：' + (e.message || e)));
+
+/* ----- 写回本地纪要 ----- */
+// 网页上改了从纪要导入的会议（含看板上改它的待办、会议里新建待办），把改动写回那个 .md：
+// 只替换改过的【标签】段，其他内容和格式不动。每个文件记下上次同步时的文件修改时间（mod）和会议的 u，
+// 会议 u 更新了才写；写之前文件的修改时间变了 = 本地也改过，让用户选保留哪边
+const LS_FSYNC = 'wb.fsync';
+const FIELD_LABEL = { title: '会议名称', link: '纪要链接', date: '日期', time: '时间', type: '会议类型', project: '关联项目', summary: '一句话总结', points: '讨论要点', conclusion: '结论', myTodos: '我的待办', othersTodos: '他人待办' };
+const MULTI = new Set(['points', 'conclusion', 'myTodos', 'othersTodos']);
+const FIELD_ORDER = ['title', 'link', 'date', 'time', 'type', 'project', 'mrd', 'prd', 'tdd', 'fe', 'be', 'tc', 'track', 'other', 'summary', 'points', 'conclusion', 'myTodos', 'othersTodos'];
+const DOC_LABEL = { mrd: 'MRD', prd: 'PRD', tdd: 'TDD', fe: 'FE-TDD', be: 'BE-TDD', tc: 'TC', track: '周会跟踪表', other: '其他文档' };
+const LABEL_RE = /^(\s*(?:[-*>#]+\s*)?(?:\*\*|__)?【(.+?)】(?:\*\*|__)?\s*[:：]?\s*)(.*)$/;
+const labelKey = name => [name, ...name.split(/[/／|]/)].map(x => MD_KEYS[x.trim()] || MD_KEYS[x.trim().toUpperCase()]).find(Boolean);
+// 会议当前的值，写成纪要里的样子
+function meetingFieldText(m) {
+  return {
+    title: m.title, link: m.link || '', date: m.date || '', time: m.start ? m.start + (m.end ? '-' + m.end : '') : '',
+    type: m.type || '', project: projectOf(m.project)?.name || '', summary: m.summary || '',
+    points: m.points || '', conclusion: m.conclusion || '', myTodos: m.myTodos || '', othersTodos: m.othersTodos || '',
+  };
+}
+function applyMeetingToMd(text, m, fileName) {
+  const was = parseMinutes(text, fileName), want = meetingFieldText(m);
+  const cur = { ...was, time: was.start ? was.start + (was.end ? '-' + was.end : '') : '', project: projectOf(was.project)?.name || '' };
+  let lines = text.replace(/\r/g, '').split('\n');
+  // 每个标签段：标签所在行 → 下一个标签前
+  const sections = () => {
+    const out = [];
+    lines.forEach((l, i) => { const mm = l.match(LABEL_RE), k = mm && labelKey(mm[2]); if (k) out.push({ k, i, head: mm[1] }); });
+    out.forEach((x, j) => { x.end = j + 1 < out.length ? out[j + 1].i : lines.length; });
+    return out;
+  };
+  // 段落末尾的空行留着，保持原来的段间距
+  const tailBlank = (from, to) => { let n = 0; while (to - 1 - n > from && !lines[to - 1 - n].trim()) n++; return n; };
+  const setSection = (k, value) => {
+    const sec = sections().find(x => x.k === k);
+    const label = FIELD_LABEL[k];
+    if (!sec) {
+      if (!value) return;
+      // 纪要里没有这个标签：按模板顺序插到后面第一个已有标签之前，都没有就加在末尾
+      const block = MULTI.has(k) ? [`【${label}】`, ...value.split('\n')] : [`【${label}】${value}`];
+      const later = sections().find(x => FIELD_ORDER.indexOf(x.k) > FIELD_ORDER.indexOf(k));
+      if (later) lines.splice(later.i, 0, ...block, ...(MULTI.has(k) ? [''] : []));
+      else lines.push(...(lines.at(-1)?.trim() ? [''] : []), ...block);
+      return;
+    }
+    const keep = tailBlank(sec.i, sec.end), blanks = Array(keep).fill('');
+    let body;
+    if (k === 'myTodos') {
+      // 沿用原来的列表写法（- 或 1. 或不加）
+      const sample = lines.slice(sec.i + 1, sec.end).find(l => l.trim()) || '';
+      const bullet = sample.match(/^\s*([-*•])\s/)?.[1], num = /^\s*\d+[.、)）]\s*/.test(sample);
+      body = todoLines(value).map((l, i) => (bullet ? `${bullet} ${l}` : num ? `${i + 1}. ${l}` : l));
+    } else body = value ? value.split('\n') : [];
+    const repl = MULTI.has(k) ? [sec.head.trimEnd(), ...body] : [sec.head + (body[0] || ''), ...body.slice(1)];
+    lines.splice(sec.i, sec.end - sec.i, ...repl, ...blanks);
+  };
+  for (const k of Object.keys(FIELD_LABEL)) {
+    const same = k === 'myTodos' ? todoLines(cur.myTodos).join('\n') === todoLines(want.myTodos).join('\n') : (cur[k] || '').trim() === (want[k] || '').trim();
+    if (!same) setSection(k, want[k]);
+  }
+  // 文档：有变化时整组重写，放在原来第一个文档标签的位置
+  const norm = ds => JSON.stringify((ds || []).map(d => [docKind(d.kind).k, d.name || '', d.url]).sort());
+  const webDocs = (m.docs || []).filter(d => !d.path);
+  if (norm(was.docs) !== norm(webDocs)) {
+    const docSecs = sections().filter(x => DOC_LABEL[x.k]);
+    // 原来没有文档标签时，放到一句话总结等后面那些标签之前
+    const at = docSecs[0]?.i ?? sections().find(x => FIELD_ORDER.indexOf(x.k) > FIELD_ORDER.indexOf('other'))?.i ?? lines.length;
+    for (const x of docSecs.reverse()) lines.splice(x.i, x.end - x.i - tailBlank(x.i, x.end));
+    const block = DOC_KINDS.flatMap(({ k }) => {
+      const ds = webDocs.filter(d => docKind(d.kind).k === k);
+      return ds.length ? [`【${DOC_LABEL[k]}】${ds[0].name} | ${ds[0].url}`, ...ds.slice(1).map(d => `${d.name} | ${d.url}`)] : [];
+    });
+    lines.splice(Math.min(at, lines.length), 0, ...block);
+  }
+  return lines.join('\n');
+}
+var fw = { busy: false, again: false, asked: false, skip: new Set() };   // var：commit() 可能在这行之前就调到 flushWrites
+let flushTimer = 0;
+function scheduleWrites() { clearTimeout(flushTimer); flushTimer = setTimeout(() => flushWrites().catch(e => toast('写回本地纪要失败：' + (e.message || e))), 1500); }
+async function flushWrites(force = {}) {
+  if (!imp.dir || !window.showDirectoryPicker) return;
+  if (fw.busy) { fw.again = true; return; }
+  const fsync = load(LS_FSYNC, {}), seen = load(LS_IMPORT, {});
+  // 还没有同步记录的旧会议：以现在为起点，不写
+  for (const m of db.meetings) if (m.src && !m.deletedAt && !fsync[m.src] && seen[m.src]) fsync[m.src] = { mod: seen[m.src], u: m.u };
+  store(LS_FSYNC, fsync);
+  const todo = db.meetings.filter(m => m.src && !m.deletedAt && fsync[m.src] && m.u > fsync[m.src].u && !fw.skip.has(m.src));
+  if (!todo.length) return;
+  if (await imp.dir.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+    if (!fw.asked) { fw.asked = true; toast(`要把网页上的修改写回本地纪要，需要允许编辑「${imp.dir.name}」文件夹`, () => grantWrite(), '允许'); }
+    return;
+  }
+  fw.busy = true;
+  try {
+    for (const m of todo) {
+      let h;
+      try { h = await imp.dir.getFileHandle(m.src); } catch { fw.skip.add(m.src); toast(`找不到本地文件「${m.src}」，可能改名或移走了，这场会议先不写回`); continue; }
+      const file = await h.getFile(), e = fsync[m.src];
+      if (file.lastModified !== e.mod && !force[m.src]) { askConflict(m, file); continue; }
+      const text = await file.text(), next = applyMeetingToMd(text, m, file.name);
+      if (next !== text) { const w = await h.createWritable(); await w.write(next); await w.close(); }
+      const mod = (await h.getFile()).lastModified;
+      fsync[m.src] = { mod, u: m.u };
+      seen[m.src] = mod;   // 自己刚写的，不再当作本地改动导入
+      store(LS_FSYNC, fsync); store(LS_IMPORT, seen);
+      if (next !== text) toast(`已同步到本地：${m.src}`);
+    }
+  } finally {
+    fw.busy = false;
+    if (fw.again) { fw.again = false; flushWrites(); }
+  }
+}
+async function grantWrite() {
+  try { if (await imp.dir.requestPermission({ mode: 'readwrite' }) === 'granted') flushWrites(); }
+  catch (e) { toast('授权失败：' + e.message); }
+}
+// 本地文件和网页都改过：让用户选
+function askConflict(m, file) {
+  fw.skip.add(m.src);
+  openDialog(`<form>
+    <h3>本地文件和网页都改过</h3>
+    <p class="hint">「${esc(m.title)}」在网页上改过，本地的 <b>${esc(m.src)}</b> 在上次同步后也改过。要保留哪一边？</p>
+    <div class="conflict"><div><b>本地文件</b><span>${esc(shortTime(file.lastModified))} 修改</span></div><div><b>网页</b><span>${esc(shortTime(m.u))} 修改</span></div></div>
+    <div class="acts"><button type="button" class="btn left" data-close>先不处理</button><button type="button" class="btn" id="cfWeb">用网页的覆盖本地</button><button class="btn primary">用本地的更新网页</button></div>
+  </form>`, () => { fw.skip.delete(m.src); importMinutes([file], true).then(r => importReport(r, false)); });
+  $('#cfWeb').onclick = () => { dlg.close(); fw.skip.delete(m.src); flushWrites({ [m.src]: true }); };
+}
 
 // 按住 Alt / Option 点击可以更换文件夹
 async function importClick(change = false) {
   if (!window.showDirectoryPicker) return pickMinutesFiles();
   try {
-    if (imp.dir && !change && await imp.dir.requestPermission({ mode: 'read' }) === 'granted') { imp.perm = 'granted'; render(); return runImport(true); }
-    imp.dir = await showDirectoryPicker({ id: 'minutes', mode: 'read' });
+    if (imp.dir && !change && await imp.dir.requestPermission({ mode: 'readwrite' }) === 'granted') { imp.perm = 'granted'; render(); return runImport(true); }
+    // 申请读写：网页上的修改要写回本地纪要
+    imp.dir = await showDirectoryPicker({ id: 'minutes', mode: 'readwrite' });
     await idb('readwrite', s => s.put(imp.dir, 'minutesDir')).catch(() => {});
     imp.perm = 'granted'; render();
     toast(`已连接「${imp.dir.name}」，以后打开工作台会自动导入新纪要`);
@@ -1406,6 +1535,18 @@ function wireSubs(form) {
   // 在子任务里按回车：接着加下一条，而不是保存整个窗口
   form.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.name === 'subText') { e.preventDefault(); add(); } });
 }
+// 会议生成的待办改了标题 / 备注：把会议【我的待办】里对应的那一行改成「标题：备注」，再写回本地纪要
+function syncTodoLine(t) {
+  const m = t.meeting && db.meetings.find(x => x.id === t.meeting && !x.deletedAt);
+  if (!m || t.manual) return;
+  const lines = todoLines(m.myTodos), key = (t.todo ?? t.text).trim(), i = lines.indexOf(key);
+  const note = (t.note || '').trim().replace(/\s*\n+\s*/g, '；');
+  const line = firstLine(t.text).trim() + (note ? '：' + note : '');
+  if (i < 0 || lines[i] === line) return;
+  lines[i] = line;
+  t.todo = line;
+  patch(m, { myTodos: lines.join('\n') });
+}
 function editTask(t) {
   openDialog(`<form>
     <h3>编辑任务</h3>
@@ -1445,7 +1586,9 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
+    const before = [t.text, t.note || ''];
     patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), firstLine(f.get('text').trim() || t.text)), subs: readSubs($('#dlg form')), ...times });
+    if (before[0] !== t.text || before[1] !== (t.note || '')) syncTodoLine(t);
   });
   wireDocs($('#dlg form'));
   wireSubs($('#dlg form'));
@@ -1921,9 +2064,11 @@ document.addEventListener('submit', e => {
     e.preventDefault();
     const m = findMeet(f.dataset.id), raw = f.text.value.trim();
     if (!m || !raw) return;
+    // 和纪要里写的待办一样：追加到【我的待办】，以后两边改都同步
     const { title, detail } = splitTodo(raw);
     const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
-    t.manual = true;
+    t.todo = raw;
+    Object.assign(m, { myTodos: [...todoLines(m.myTodos), raw].join('\n'), u: now() });
     commit();
     openMeetingDetail(m);
     return;
@@ -1938,7 +2083,6 @@ document.addEventListener('submit', e => {
     const title = raw.replace(pasted, '').trim() || '会议纪要';
     const base = ui.meetMore ? readMeeting(fd) : (() => { const [d, s, en] = nowSlot(); return { date: d, start: s, end: en, type: '其他', project: ui.project !== 'all' ? ui.project : '', points: '', conclusion: '', link: '' }; })();
     base.link = base.link || safeLink(pasted);
-    if (!base.link) { toast('请附上会议纪要链接：在会议名称后面粘贴链接即可'); return; }
     const dup = findByLink(base.link);
     if (dup) {
       const el = document.getElementById('m-' + dup.id);
