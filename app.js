@@ -47,6 +47,7 @@ const ICON = {
   cal: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   grid: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h1M12 9h4M8 15h1M12 15h4"/></svg>',
   docAdd: '<svg viewBox="0 0 24 24"><path d="M13 3H7v18h7"/><path d="M13 3l6 6v4M13 3v6h6M18 15v6M15 18h6"/></svg>',
+  note: '<svg viewBox="0 0 24 24"><path d="M14 4H5v16h14v-7"/><path d="M18 3l3 3-8 8-3.5.5L10 11z"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>',
 };
 
@@ -531,7 +532,7 @@ function newNextTask(t) {
   openDialog(`<form>
     <h3>新建关联任务</h3>
     <p class="hint">上一步：${esc(firstLine(t.text))}</p>
-    <label>下一步<textarea class="field" name="text" required placeholder="标题：备注，例如「同步评审结论：发到项目群」"></textarea></label>
+    <label>下一步<textarea class="field" name="text" required placeholder="标题：内容，例如「同步评审结论：发到项目群」"></textarea></label>
     <label>备注<input class="field" name="note" placeholder="可选"></label>
     <div class="grid2">
       <label>项目<select class="field" name="project">${projectOptions(t.project)}</select></label>
@@ -543,9 +544,9 @@ function newNextTask(t) {
       <button class="btn primary">创建</button>
     </div>
   </form>`, f => {
-    // 「标题：备注」拆开；备注框也填了时两段都留
-    const { title, detail } = splitTodo(f.get('text').trim()), note = [detail, (f.get('note') || '').trim()].filter(Boolean).join('\n');
-    const next = addTask(title, { project: f.get('project'), due: readDue(f), note, parent: t.id });
+    // 「标题：内容」拆成标题和内容；备注框里的是备注
+    const { title, detail } = splitTodo(f.get('text').trim());
+    const next = addTask(joinTask(title, detail), { project: f.get('project'), due: readDue(f), note: (f.get('note') || '').trim(), parent: t.id });
     if (!next) return false;
     if (f.get('finish')) setStatus(t, 'done');
     setTimeout(() => flashTask(next.id));
@@ -590,7 +591,6 @@ function viewBoard() {
 
   const cardBody = t => `
       <div class="card-text" data-act="task-open" data-id="${t.id}" title="点击查看">${cardText(t.text)}</div>
-      ${t.note?.trim() ? `<div class="card-note" data-act="task-open" data-id="${t.id}">${esc(t.note.trim())}</div>` : ''}
       ${subList(t, 4)}
       <div class="card-meta">${ui.project === 'all' ? projectTag(t.project) : ''}${subTag(t)}${dueTag(t)}${relTags(t)}${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}<span class="card-time">${t.status === 'todo' ? '创建 ' + shortTime(t.createdAt) : '开始 ' + shortTime(t.startedAt)}</span></div>`;
   // 操作按钮放在卡片右侧，不单独占一行；进行中卡片为「完成」+ 一排小图标
@@ -620,7 +620,7 @@ function viewBoard() {
     <form class="panel composer" id="taskForm" autocomplete="off">
       <div class="composer-row">
         ${ICON.plus}
-        <input class="composer-input" name="text" id="taskInput" placeholder="输入待办（标题：备注），回车保存">
+        <input class="composer-input" name="text" id="taskInput" placeholder="输入待办（标题：内容），回车保存">
         <button type="button" class="btn" data-act="toggle-more">${ICON.filter}更多${ICON.down}</button>
         <button type="submit" class="btn">添加</button>
       </div>
@@ -849,7 +849,7 @@ function meetingFields(m = {}, inDialog = false) {
     <label>一句话总结<input class="field" name="summary" value="${esc(m.summary)}" placeholder="卡片上只显示这一句"></label>
     <label>讨论要点<textarea class="field" name="points">${esc(m.points)}</textarea></label>
     <label>结论<textarea class="field" name="conclusion">${esc(m.conclusion)}</textarea></label>
-    <label><span>我的待办 <span class="hint-inline">每行一条「短标题：详情」，短标题作待办、详情作备注；保存时新行生成待办，改过的行更新原待办；删掉某行时，还没开始的待办会一并删除</span></span><textarea class="field" name="myTodos" placeholder="例如：整理首批商家清单：按 GMV 排序，周五前发群里">${esc(m.myTodos)}</textarea></label>
+    <label><span>我的待办 <span class="hint-inline">每行一条「标题：内容」，拆成待办的标题和内容；保存时新行生成待办，改过的行更新原待办；删掉某行时，还没开始的待办会一并删除</span></span><textarea class="field" name="myTodos" placeholder="例如：整理首批商家清单：按 GMV 排序，周五前发群里">${esc(m.myTodos)}</textarea></label>
     <label>他人待办<textarea class="field" name="othersTodos" placeholder="例如：@叙璋 周四前确认结算规则">${esc(m.othersTodos)}</textarea></label>`;
 }
 
@@ -888,29 +888,35 @@ function allDocs() {
     e.srcs.push(src); e.ts = Math.max(e.ts, src.ts);
   };
   db.tasks.filter(t => !t.deletedAt).forEach(t => (t.docs || []).forEach(d => add(d, { kind: 'task', id: t.id, label: firstLine(t.text), done: t.status === 'done', project: t.project, ts: d.at || t.doneAt || t.startedAt || t.createdAt })));
+  // 任务的备注（过程中的想法、产出）也列进来，标题取备注里第一句文字
+  db.tasks.filter(t => !t.deletedAt && t.note?.trim()).forEach(t => {
+    const first = t.note.trim().split('\n').map(l => l.trim()).find(l => l && !/^!\[/.test(l)) || '（图片）';
+    add({ kind: 'note', url: 'note:' + t.id, task: t.id, name: first.replace(/^(?:[-*•#]+|\d+[.、)）])\s*|\*\*/g, '') },
+      { kind: 'task', id: t.id, label: firstLine(t.text), done: t.status === 'done', project: t.project, ts: t.doneAt || t.u });
+  });
   return [...map.values()].sort((a, b) => b.ts - a.ts);
 }
 function viewDocs() {
   const q = ui.dq.trim().toLowerCase();
   const list = allDocs()
     .filter(d => ui.project === 'all' || d.srcs.some(s => s.project === ui.project))
-    .filter(d => ui.dKind === 'all' || docKind(d.kind).k === ui.dKind)
+    .filter(d => ui.dKind === 'all' || (d.kind === 'note' ? ui.dKind === 'note' : docKind(d.kind).k === ui.dKind))
     .filter(d => !q || [d.name, ...d.srcs.map(s => s.label)].some(v => (v || '').toLowerCase().includes(q)));
   return `
     <div class="panel filters">
       <label class="search">${ICON.search}<input id="dq" placeholder="搜索文档名、任务…" value="${esc(ui.dq)}"></label>
-      <select class="field" id="dKind"><option value="all">全部类型</option>${DOC_KINDS.map(k => `<option value="${k.k}" ${ui.dKind === k.k ? 'selected' : ''}>${k.label}</option>`).join('')}</select>
+      <select class="field" id="dKind"><option value="all">全部类型</option>${DOC_KINDS.map(k => `<option value="${k.k}" ${ui.dKind === k.k ? 'selected' : ''}>${k.label}</option>`).join('')}<option value="note" ${ui.dKind === 'note' ? 'selected' : ''}>任务备注</option></select>
       ${ui.dq || ui.dKind !== 'all' ? '<button class="btn sm" data-act="doc-clear">清除筛选</button>' : ''}
     </div>
     <p class="list-meta">共 <span class="mono">${list.length}</span> 个产出文档</p>
     <div class="doc-list">${list.map(d => `<div class="card doc-item">
-      ${docBtn(d)}
+      ${d.kind === 'note' ? `<button type="button" class="doc-btn" data-act="task-open" data-id="${d.task}" title="任务备注：打开任务查看">${ICON.note}</button>` : docBtn(d)}
       <div class="card-main">
         <div class="doc-name">${esc(d.name || '文档')}</div>
         <div class="card-meta">${ui.project === 'all' ? projectTag(d.srcs.find(s => s.project)?.project) : ''}${d.srcs.map(s =>
           `<span class="rel" data-act="task-open" data-id="${s.id}">${esc(s.label)}${s.done ? ' ✓' : ' · 进行中'}</span>`).join('')}<span class="card-time">${mdSlash(d.ts)}</span></div>
       </div>
-    </div>`).join('') || '<div class="panel empty">还没有产出文档。进行中的任务点 📄+ 添加后会出现在这里</div>'}</div>`;
+    </div>`).join('') || '<div class="panel empty">还没有产出文档。进行中的任务点 📄+ 添加文档，或在任务里写备注后，会出现在这里</div>'}</div>`;
 }
 
 // 会议卡片：标题行带类型、项目标签；右侧每个文档一个图标按钮（🎤 纪要 / 📄 PRD / ↗ 其他），竖线后是编辑（删除放在编辑窗口里）
@@ -976,7 +982,7 @@ function openMeetingDetail(m) {
     ${sec('讨论要点', text(m.points))}
     ${sec('结论', text(m.conclusion))}
     <div class="d-sec"><h4><i></i>我的待办<button class="h4-btn" data-act="meet-todo-new" data-id="${m.id}" title="挂到这场会议下，创建时间记为会议结束时间">${ICON.plus}新建</button></h4>
-      <form class="d-add" id="meetTodoForm" data-id="${m.id}" autocomplete="off" hidden>${ICON.plus}<input name="text" placeholder="短标题：详情，回车保存，Esc 取消"></form>${mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
+      <form class="d-add" id="meetTodoForm" data-id="${m.id}" autocomplete="off" hidden>${ICON.plus}<input name="text" placeholder="标题：内容，回车保存，Esc 取消"></form>${mine.map(t => `<div class="d-todo" data-act="goto-task" data-id="${t.id}" title="跳到看板">
       <span class="d-st ${ST_CLASS[t.status]}">${STATUS[t.status]}</span>
       <span class="d-todo-main"><span class="d-todo-text">${esc(firstLine(t.text))}</span>${t.note?.trim() ? `<span class="d-todo-note">${esc(t.note.trim())}</span>` : ''}</span>
       ${t.docs?.length ? `<span class="card-docs">${docBtns(t.docs, ' sm')}</span>` : ''}${ICON.arrow}</div>`).join('')}
@@ -1031,12 +1037,15 @@ function meetingEndTs(m) {
   const ts = m.date && clock ? new Date(`${m.date}T${clock}`).getTime() : 0;
   return ts && ts < now() ? ts : now();
 }
-// 「我的待办」每行写成「短标题：详情」，短标题作待办内容，详情作备注；没有冒号就只有标题
+// 「我的待办」每行写成「标题：内容」，拆成待办的标题和内容；没有冒号就只有标题
 // 冒号不能是时间（10:30）或链接（https://）里的
 function splitTodo(line) {
   const m = (line || '').match(/^(.+?)\s*(?:：|(?<!\d):(?!\/\/|\d))\s*(.+)$/s);
   return m ? { title: m[1].trim(), detail: m[2].trim() } : { title: (line || '').trim(), detail: '' };
 }
+// 任务 text：第一行是标题，后面的行是内容；备注（note）另放过程中的想法和产出
+const taskBody = t => (t.text || '').split('\n').slice(1).join('\n').trim();
+const joinTask = (title, body) => (body ? `${title}\n${body}` : title);
 const todoLines = v => (v || '').split(/\n+/).map(s => s.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, '').trim()).filter(Boolean);
 // 两段文字的相近程度（相邻两字的重合比例，0～1）
 function similarity(a, b) {
@@ -1064,17 +1073,17 @@ function syncMyTodos(m, prev = '') {
     if (!best || best.score < 0.35) return true;
     const t = best.t;
     free.splice(free.indexOf(t), 1);
-    const was = splitTodo(keyOf(t)), next = splitTodo(l), patch = { todo: l, u: now() };
-    if (!best.orphan && [was.title, keyOf(t)].includes(t.text.trim())) patch.text = next.title;
-    if (!best.orphan && [was.detail, ''].includes((t.note || '').trim())) patch.note = next.detail;
-    Object.assign(t, patch);
+    const was = splitTodo(keyOf(t)), next = splitTodo(l);
+    const keepTitle = best.orphan || ![was.title, keyOf(t)].includes(firstLine(t.text).trim());
+    const keepBody = best.orphan || ![was.detail, ''].includes(taskBody(t));
+    Object.assign(t, { text: joinTask(keepTitle ? firstLine(t.text) : next.title, keepBody ? taskBody(t) : next.detail), todo: l, u: now() });
     changed++;
     return false;
   });
   const createdAt = meetingEndTs(m);
   fresh.forEach(l => {
     const { title, detail } = splitTodo(l);
-    const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt, silent: true });
+    const t = addTask(joinTask(title, detail), { project: m.project, meeting: m.id, createdAt, silent: true });
     t.todo = l;
   });
   // 文档里删掉的行：对应待办还没开始的，彻底删除（不进「已删除」）；已开始 / 已完成的保留
@@ -1500,7 +1509,7 @@ function openTaskDetail(t) {
       <div class="meet-acts"><button class="ib" data-act="task-edit" data-id="${t.id}" title="编辑（删除也在里面）">${ICON.edit}</button></div>
     </div>
     <div class="d-body">
-    ${sec('描述', desc && `<div class="md">${renderMd(desc)}</div>`)}
+    ${sec('内容', desc && `<div class="md">${renderMd(desc)}</div>`)}
     <div class="d-sec"><h4><i></i>子任务${t.subs?.length ? `<span class="h4-n">${t.subs.filter(x => x.done).length}/${t.subs.length}</span>` : ''}<button class="h4-btn" data-act="sub-new" data-id="${t.id}">${ICON.plus}添加</button></h4>
       ${subList(t, Infinity, true)}<form class="d-add" id="subForm" data-id="${t.id}" autocomplete="off" hidden>${ICON.plus}<input name="text" placeholder="子任务内容，回车添加，Esc 取消"></form></div>
     ${sec('备注', t.note?.trim() && `<div class="md">${renderMd(t.note.trim())}</div>`)}
@@ -1514,6 +1523,35 @@ function openTaskDetail(t) {
   dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
   const subsBox = $('#dlg .subs.full');
   if (subsBox) sortable(subsBox, '.sub', ids => setSubs(t, reorder(t.subs, ids)));
+  loadRepoImages($('#dlg .d-body'));
+}
+// 备注里的图片存在数据仓库（docs/<任务名>/assets/），路径从仓库根目录写起，查看时用同一个 Token 读出来
+async function loadRepoImages(box) {
+  for (const img of $$('img[data-src]', box || document.createElement('div'))) {
+    const r = cfgReady() ? await gh('GET', null, decodeRef(img.dataset.src), true).catch(() => null) : null;
+    if (r?.ok) img.src = URL.createObjectURL(await r.blob());
+    else img.replaceWith(Object.assign(document.createElement('span'), { className: 'img-lost', textContent: `〔图片：${img.alt || baseOf(img.dataset.src)}〕` }));
+  }
+}
+// 在备注框里 ⌘V 粘贴图片：上传到数据仓库，在光标处插入图片
+function wireNoteImages(t, area) {
+  area.addEventListener('paste', async e => {
+    const img = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith('image/'));
+    if (!img) return;
+    e.preventDefault();
+    if (!cfgReady()) return toast('图片要存到数据仓库，请先点右上角「连接 GitHub」');
+    const d = new Date(), stamp = `${ymd(d).replace(/-/g, '')}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    const path = `docs/${safeSeg(firstLine(t.text))}/assets/备注-${stamp}.${(img.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+    const mark = `![上传中…](${stamp})`, at = area.selectionStart;
+    area.setRangeText(mark, at, area.selectionEnd, 'end');
+    toast('图片上传中…');
+    try {
+      const r = await gh('PUT', { message: `workbench: 上传 ${path}`, content: await fileB64(img), branch: cfg().branch || 'main' }, path);
+      if (!r.ok) throw new Error(await ghError(r));
+      area.value = area.value.replace(mark, `![图片](${encodeURI(path)})`);
+      toast('图片已插入备注，保存后生效');
+    } catch (err) { area.value = area.value.replace(mark, ''); toast('图片上传失败：' + err.message); }
+  });
 }
 
 // 编辑窗口里的子任务：勾选、改文字、删除、添加，点「保存」才生效
@@ -1535,13 +1573,13 @@ function wireSubs(form) {
   // 在子任务里按回车：接着加下一条，而不是保存整个窗口
   form.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.name === 'subText') { e.preventDefault(); add(); } });
 }
-// 会议生成的待办改了标题 / 备注：把会议【我的待办】里对应的那一行改成「标题：备注」，再写回本地纪要
+// 会议生成的待办改了标题 / 内容：把会议【我的待办】里对应的那一行改成「标题：内容」，再写回本地纪要
 function syncTodoLine(t) {
   const m = t.meeting && db.meetings.find(x => x.id === t.meeting && !x.deletedAt);
   if (!m || t.manual) return;
   const lines = todoLines(m.myTodos), key = (t.todo ?? t.text).trim(), i = lines.indexOf(key);
-  const note = (t.note || '').trim().replace(/\s*\n+\s*/g, '；');
-  const line = firstLine(t.text).trim() + (note ? '：' + note : '');
+  const body = taskBody(t).replace(/\s*\n+\s*/g, '；');
+  const line = firstLine(t.text).trim() + (body ? '：' + body : '');
   if (i < 0 || lines[i] === line) return;
   lines[i] = line;
   t.todo = line;
@@ -1550,15 +1588,16 @@ function syncTodoLine(t) {
 function editTask(t) {
   openDialog(`<form>
     <h3>编辑任务</h3>
-    <label>内容<textarea class="field" name="text" required>${esc(t.text)}</textarea></label>
+    <label>标题<input class="field" name="title" value="${esc(firstLine(t.text))}" required></label>
+    <label>内容<textarea class="field" name="body" placeholder="具体要做什么">${esc(taskBody(t))}</textarea></label>
+    ${subsEdit(t.subs)}
+    <label><span>备注 <span class="hint-inline">完成过程中的想法、结论或产出，可以直接粘贴图片</span></span><textarea class="field note-area" name="note">${esc(t.note)}</textarea></label>
+    ${docsEdit(t.docs, '产出文档')}
     <div class="grid2">
       <label>项目<select class="field" name="project">${projectOptions(t.project)}</select></label>
       <label>状态<select class="field" name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     </div>
     <label>截止时间（可只填日期，也可不填）${dueFields(t.due)}</label>
-    <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
-    ${subsEdit(t.subs)}
-    ${docsEdit(t.docs, '产出文档')}
     <div class="grid3 even">
       <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
       <label>开始时间<input class="field" type="datetime-local" name="startedAt" value="${toLocalInput(t.startedAt)}"></label>
@@ -1586,12 +1625,13 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    const before = [t.text, t.note || ''];
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), firstLine(f.get('text').trim() || t.text)), subs: readSubs($('#dlg form')), ...times });
-    if (before[0] !== t.text || before[1] !== (t.note || '')) syncTodoLine(t);
+    const before = t.text, title = f.get('title').trim() || firstLine(t.text);
+    patch(t, { text: joinTask(title, f.get('body').trim()), project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), title), subs: readSubs($('#dlg form')), ...times });
+    if (before !== t.text) syncTodoLine(t);
   });
   wireDocs($('#dlg form'));
   wireSubs($('#dlg form'));
+  wireNoteImages(t, $('#dlg [name=note]'));
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
 
@@ -2046,10 +2086,9 @@ document.addEventListener('submit', e => {
     const fd = new FormData(f);
     if (!fd.get('text').trim()) return;
     if (ui.more) f.reset(); else f.text.value = '';
-    // 「标题：备注」：冒号前作待办内容，冒号后作备注；「更多」里也填了备注时两段都留
-    const { title, detail } = splitTodo(fd.get('text').trim()), extra = ui.more ? (fd.get('note') || '').trim() : '';
-    const note = [detail, extra].filter(Boolean).join('\n');
-    addTask(title, ui.more ? { project: fd.get('project'), due: readDue(fd), note } : { note });
+    // 「标题：内容」：冒号前是标题，冒号后是内容；「更多」里填的是备注
+    const { title, detail } = splitTodo(fd.get('text').trim()), note = ui.more ? (fd.get('note') || '').trim() : '';
+    addTask(joinTask(title, detail), ui.more ? { project: fd.get('project'), due: readDue(fd), note } : {});
     $('#taskInput').focus();
   }
   // 会议详情里手动新建「我的待办」：挂到该会议，创建时间为会议结束时间
@@ -2066,7 +2105,7 @@ document.addEventListener('submit', e => {
     if (!m || !raw) return;
     // 和纪要里写的待办一样：追加到【我的待办】，以后两边改都同步
     const { title, detail } = splitTodo(raw);
-    const t = addTask(title, { note: detail, project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
+    const t = addTask(joinTask(title, detail), { project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
     t.todo = raw;
     Object.assign(m, { myTodos: [...todoLines(m.myTodos), raw].join('\n'), u: now() });
     commit();
