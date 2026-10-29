@@ -1342,6 +1342,23 @@ function openTaskDetail(t) {
   dlg.onclick = e => { if (e.target === dlg) dlg.close(); };
 }
 
+// 编辑窗口里的子任务：勾选、改文字、删除、添加，点「保存」才生效
+const subRow = (x = {}) => `<div class="sub-row" data-sid="${esc(x.id || '')}"><input type="checkbox" ${x.done ? 'checked' : ''} title="完成"><input class="field" name="subText" value="${esc(x.text || '')}" placeholder="子任务内容"><button type="button" class="ib del" data-sub-del title="移除">${ICON.x}</button></div>`;
+const subsEdit = subs => `<div class="docs-edit"><div class="docs-label">子任务</div>
+  <div class="sub-rows">${(subs || []).map(subRow).join('')}</div>
+  <button type="button" class="add-doc" data-sub-add>${ICON.plus}添加子任务</button>
+</div>`;
+const readSubs = form => $$('.sub-row', form).map(r => ({ id: r.dataset.sid || uid(), text: $('[name=subText]', r).value.trim(), done: $('[type=checkbox]', r).checked })).filter(x => x.text);
+function wireSubs(form) {
+  const add = () => { $('.sub-rows', form).insertAdjacentHTML('beforeend', subRow()); $('.sub-row:last-child [name=subText]', form).focus(); };
+  form.addEventListener('click', e => {
+    if (e.target.closest('[data-sub-add]')) add();
+    const del = e.target.closest('[data-sub-del]');
+    if (del) del.closest('.sub-row').remove();
+  });
+  // 在子任务里按回车：接着加下一条，而不是保存整个窗口
+  form.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.name === 'subText') { e.preventDefault(); add(); } });
+}
 function editTask(t) {
   openDialog(`<form>
     <h3>编辑任务</h3>
@@ -1352,6 +1369,7 @@ function editTask(t) {
     </div>
     <label>截止时间（可只填日期，也可不填）${dueFields(t.due)}</label>
     <label>备注<textarea class="field" name="note">${esc(t.note)}</textarea></label>
+    ${subsEdit(t.subs)}
     ${docsEdit(t.docs, '产出文档')}
     <div class="grid3 even">
       <label>创建时间<input class="field" type="datetime-local" name="createdAt" value="${toLocalInput(t.createdAt)}"></label>
@@ -1380,9 +1398,10 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), firstLine(f.get('text').trim() || t.text)), ...times });
+    patch(t, { text: f.get('text').trim() || t.text, project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), firstLine(f.get('text').trim() || t.text)), subs: readSubs($('#dlg form')), ...times });
   });
   wireDocs($('#dlg form'));
+  wireSubs($('#dlg form'));
   $('#dlgDel').onclick = () => { dlg.close(); removeTask(t); };
 }
 

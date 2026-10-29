@@ -568,3 +568,8 @@ button.doc-btn { cursor: pointer; }
 .subs.full .sub:hover .ib { opacity: 1; }
 .sub-more { font-size: 12px; color: var(--faint); cursor: pointer; }
 .h4-n { font-weight: 400; color: var(--faint); font-size: 12px; margin-left: 4px; }
+
+.sub-rows { display: flex; flex-direction: column; gap: 6px; }
+.sub-rows:empty { display: none; }
+.sub-row { display: grid; grid-template-columns: 20px 1fr 30px; gap: 6px; align-items: center; }
+.dlg .sub-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--green); margin: 0 auto; }
