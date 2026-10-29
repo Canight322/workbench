@@ -1057,26 +1057,34 @@ function similarity(a, b) {
 }
 // 「我的待办」每行对应一条关联待办，待办上的 todo 记着它来自哪一行（旧数据没有时按待办内容算）
 // 文档里改了某一行：同一位置被替换、或新旧两行足够相近时，更新原来那条待办（状态和变更记录保留），不再新建；
-// 待办在看板上改过内容 / 备注的，那一项保持你改的，不覆盖。真正新增的行才生成新待办（创建时间为会议结束时间）
-function syncMyTodos(m, prev = '') {
-  const lines = todoLines(m.myTodos), before = todoLines(prev);
+// 真正新增的行才生成新待办（创建时间为会议结束时间）。
+// md：对比的是本地纪要前后两版【我的待办】（网页上改的行不在里面，不会被当成纪要里删掉的行）
+function syncMyTodos(m, prev = '', md = null) {
+  const lines = todoLines(md ?? m.myTodos), before = todoLines(prev);
   const linked = db.tasks.filter(t => t.meeting === m.id && !t.manual && !t.purged);   // 手动加的、已彻底删除的不参与对应
-  const keyOf = t => (t.todo ?? t.text).trim();
-  const free = linked.filter(t => !lines.includes(keyOf(t)));   // 对不上任何一行的待办（行被改了或删了）
+  // 按纪要同步时认待办来自纪要的哪一行（mdTodo，网页上改了这行也不变），否则认网页上的那一行
+  const webKey = t => (t.todo ?? t.text).trim(), keyOf = t => (md != null && t.mdTodo != null ? t.mdTodo : webKey(t)).trim();
+  // 对不上任何一行的待办（行被改了或删了）；按纪要同步时只看纪要里原有的行（和没记来源行的旧数据）
+  const free = linked.filter(t => !lines.includes(keyOf(t)) && (md == null || before.includes(keyOf(t)) || t.todo == null));
+  const edits = {}, dropped = [];   // 网页那份【我的待办】里要改成纪要新内容的行 / 要去掉的行
   let changed = 0;
   const fresh = lines.filter(l => !linked.some(t => keyOf(t) === l)).filter(l => {
     const pos = lines.indexOf(l), samePos = before[pos] && !lines.includes(before[pos]) ? before[pos] : null;
     // 旧数据：这一行早就在了却没有对应待办，而某条待办的内容也不在旧的行里（看板上改过名字），就是它们俩
     const orphan = t => before.includes(l) && !before.includes(keyOf(t));
-    const best = free.map(t => ({ t, orphan: orphan(t), score: keyOf(t) === samePos || orphan(t) ? 1 : similarity(keyOf(t), l) }))
+    // 内容相近优先；同一位置被替换的加分（整行重写也算改），但不压过更像的那条（同时删了上一行、改了下一行时不会对错）
+    const best = free.map(t => ({ t, orphan: orphan(t), score: orphan(t) ? 1 : similarity(keyOf(t), l) + (keyOf(t) === samePos ? 0.4 : 0) }))
       .sort((a, b) => b.score - a.score)[0];
-    if (!best || best.score < 0.35) return true;
+    // 纪要里早就有、网页上删掉了的行，不再生成
+    if (!best || best.score < 0.35) return md == null || !before.includes(l);
     const t = best.t;
     free.splice(free.indexOf(t), 1);
-    const was = splitTodo(keyOf(t)), next = splitTodo(l);
-    const keepTitle = best.orphan || ![was.title, keyOf(t)].includes(firstLine(t.text).trim());
-    const keepBody = best.orphan || ![was.detail, ''].includes(taskBody(t));
-    Object.assign(t, { text: joinTask(keepTitle ? firstLine(t.text) : next.title, keepBody ? taskBody(t) : next.detail), todo: l, u: now() });
+    edits[webKey(t)] = l;
+    const next = splitTodo(l);
+    // 纪要里改了这一行：待办的标题和内容按纪要来，网页上改过也以纪要为准（只认出对应关系的旧数据不改名字）
+    // 网页上改从纪要来的行：先记下它原来在纪要里是哪一行，纪要以后改 / 删这行还能对上
+    if (md == null && m.src && t.mdTodo == null && before.includes(keyOf(t))) t.mdTodo = keyOf(t);
+    Object.assign(t, { text: best.orphan ? t.text : joinTask(next.title, next.detail), todo: l, ...(md != null ? { mdTodo: l } : {}), u: now() });
     changed++;
     return false;
   });
@@ -1085,10 +1093,18 @@ function syncMyTodos(m, prev = '') {
     const { title, detail } = splitTodo(l);
     const t = addTask(joinTask(title, detail), { project: m.project, meeting: m.id, createdAt, silent: true });
     t.todo = l;
+    if (md != null) t.mdTodo = l;
   });
   // 文档里删掉的行：对应待办还没开始的，彻底删除（不进「已删除」）；已开始 / 已完成的保留
+  if (md != null) free.filter(t => before.includes(keyOf(t))).forEach(t => dropped.push(webKey(t)));
   const gone = free.filter(t => before.includes(keyOf(t)) && !t.deletedAt && t.status === 'todo');
   gone.forEach(t => Object.assign(t, { deletedAt: now(), purged: 1, text: '', note: '', todo: '', log: withLog(t, 'delete'), u: now() }));
+  // 按纪要同步：把纪要的改动（改 / 删 / 新增的行）套到网页上的【我的待办】，网页上改过的其他行不动
+  if (md != null) {
+    const out = todoLines(m.myTodos).filter(l => !dropped.includes(l) && (!before.includes(l) || lines.includes(l))).map(l => edits[l] ?? l);
+    m.myTodos = [...out, ...lines.filter(l => !before.includes(l) && !out.includes(l))].join('\n');
+    m.mdTodos = lines.join('\n');
+  }
   return { n: fresh.length, changed, removed: gone.length };
 }
 const todoMsg = r => [r.n && `生成 ${r.n} 条关联待办`, r.changed && `更新 ${r.changed} 条关联待办`, r.removed && `删除 ${r.removed} 条关联待办`].filter(Boolean).join('，');
@@ -1165,7 +1181,7 @@ async function importMinutes(files, all = false) {
     const info = rec => [rec.title, `类型：${rec.type}`, `项目：${projectOf(rec.project)?.name || '无'}`,
       projectName && !matchProject(projectName) ? `纪要里的项目「${projectName}」没有对上现有项目` : ''].filter(Boolean).join(' · ');
     if (!old) {
-      const rec = { id: uid(), ...m, src: file.name, createdAt: now(), deletedAt: 0, u: now() };
+      const rec = { id: uid(), ...m, mdTodos: m.myTodos, src: file.name, createdAt: now(), deletedAt: 0, u: now() };
       db.meetings.push(rec);
       res.todos += syncMyTodos(rec).n;
       res.added.push(rec.title);
@@ -1174,11 +1190,13 @@ async function importMinutes(files, all = false) {
       continue;
     }
     // 网页上补的文档也保留
-    const next = { ...m, docs: mergeDocs(m.docs, old.docs) };
-    if (Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); synced(old); continue; }
-    const prev = old.myTodos;
+    // 【我的待办】网页上可以单独改：这里只和上次读到的纪要版本比，纪要里的改动再套到网页那份上
+    const { myTodos: mdTodos, ...next } = { ...m, docs: mergeDocs(m.docs, old.docs) };
+    const mdPrev = old.mdTodos ?? old.myTodos ?? '';
+    const todosSame = todoLines(mdTodos).join('\n') === todoLines(mdPrev).join('\n');
+    if (todosSame && Object.keys(next).every(k => JSON.stringify(next[k] ?? '') === JSON.stringify(old[k] ?? ''))) { note(file.name, 'same', info(old)); synced(old); continue; }
     Object.assign(old, next, { src: file.name, u: now() });
-    const r = syncMyTodos(old, prev);
+    const r = todosSame ? { n: 0, changed: 0, removed: 0 } : syncMyTodos(old, mdPrev, mdTodos);
     res.todos += r.n; res.todoChanged += r.changed; res.todoRemoved += r.removed;
     res.updated.push(old.title);
     note(file.name, 'upd', info(old));
@@ -1257,7 +1275,7 @@ async function autoImport(manual = false) {
 const runImport = manual => autoImport(manual).then(() => flushWrites()).catch(e => toast('导入纪要失败：' + (e.message || e)));
 
 /* ----- 写回本地纪要 ----- */
-// 网页上改了从纪要导入的会议（含看板上改它的待办、会议里新建待办），把改动写回那个 .md：
+// 网页上改了从纪要导入的会议（【我的待办】除外：待办以网页 / data 仓库为准），把改动写回那个 .md：
 // 只替换改过的【标签】段，其他内容和格式不动。每个文件记下上次同步时的文件修改时间（mod）和会议的 u，
 // 会议 u 更新了才写；写之前文件的修改时间变了 = 本地也改过，让用户选保留哪边
 const LS_FSYNC = 'wb.fsync';
@@ -1311,7 +1329,8 @@ function applyMeetingToMd(text, m, fileName) {
     const repl = MULTI.has(k) ? [sec.head.trimEnd(), ...body] : [sec.head + (body[0] || ''), ...body.slice(1)];
     lines.splice(sec.i, sec.end - sec.i, ...repl, ...blanks);
   };
-  for (const k of Object.keys(FIELD_LABEL)) {
+  // 【我的待办】只从本地纪要同步到网页，网页上的待办改动不写回 .md
+  for (const k of Object.keys(FIELD_LABEL).filter(k => k !== 'myTodos')) {
     const same = k === 'myTodos' ? todoLines(cur.myTodos).join('\n') === todoLines(want.myTodos).join('\n') : (cur[k] || '').trim() === (want[k] || '').trim();
     if (!same) setSection(k, want[k]);
   }
@@ -1573,18 +1592,6 @@ function wireSubs(form) {
   // 在子任务里按回车：接着加下一条，而不是保存整个窗口
   form.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.target.name === 'subText') { e.preventDefault(); add(); } });
 }
-// 会议生成的待办改了标题 / 内容：把会议【我的待办】里对应的那一行改成「标题：内容」，再写回本地纪要
-function syncTodoLine(t) {
-  const m = t.meeting && db.meetings.find(x => x.id === t.meeting && !x.deletedAt);
-  if (!m || t.manual) return;
-  const lines = todoLines(m.myTodos), key = (t.todo ?? t.text).trim(), i = lines.indexOf(key);
-  const body = taskBody(t).replace(/\s*\n+\s*/g, '；');
-  const line = firstLine(t.text).trim() + (body ? '：' + body : '');
-  if (i < 0 || lines[i] === line) return;
-  lines[i] = line;
-  t.todo = line;
-  patch(m, { myTodos: lines.join('\n') });
-}
 function editTask(t) {
   openDialog(`<form>
     <h3>编辑任务</h3>
@@ -1625,9 +1632,8 @@ function editTask(t) {
     if (t.status !== 'todo' && changed(started, t.startedAt)) { times.startedAt = started; log = retimeLog(log, 'start', started); }
     if (t.status === 'done' && changed(done, t.doneAt)) { times.doneAt = done; log = retimeLog(log, 'done', done); }
     if (Object.keys(times).length) times.log = log;
-    const before = t.text, title = f.get('title').trim() || firstLine(t.text);
+    const title = f.get('title').trim() || firstLine(t.text);
     patch(t, { text: joinTask(title, f.get('body').trim()), project: f.get('project'), due: readDue(f), note: f.get('note'), docs: readDocs($('#dlg form'), title), subs: readSubs($('#dlg form')), ...times });
-    if (before !== t.text) syncTodoLine(t);
   });
   wireDocs($('#dlg form'));
   wireSubs($('#dlg form'));
@@ -2103,11 +2109,10 @@ document.addEventListener('submit', e => {
     e.preventDefault();
     const m = findMeet(f.dataset.id), raw = f.text.value.trim();
     if (!m || !raw) return;
-    // 和纪要里写的待办一样：追加到【我的待办】，以后两边改都同步
+    // 只挂在这场会议下，不写进【我的待办】（那是本地纪要的内容；写进去下次导入会被当成删掉的行）
     const { title, detail } = splitTodo(raw);
     const t = addTask(joinTask(title, detail), { project: m.project, meeting: m.id, createdAt: meetingEndTs(m), silent: true });
-    t.todo = raw;
-    Object.assign(m, { myTodos: [...todoLines(m.myTodos), raw].join('\n'), u: now() });
+    t.manual = true;
     commit();
     openMeetingDetail(m);
     return;
